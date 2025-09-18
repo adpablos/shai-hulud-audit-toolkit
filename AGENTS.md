@@ -96,6 +96,8 @@ The default audit (`scripts/audit.py`) fetches advisories into
 - `pip install -r requirements-dev.txt && pip install -e .`
 - `ruff check .`
 - `pytest`
+- `pytest --cov --cov-report=term-missing --cov-fail-under=80` mirrors CI's coverage gate
+  - CI rejects PRs if coverage falls below 80%; run this locally before pushing significant changes.
 - Optional: quick audit run with `--skip-fetch` when touching scan logic.
 
 ## Logging & Error Handling
