@@ -1,5 +1,14 @@
 # Changelog
 
+## v0.1.1 - 2025-09-17
+
+- Ensure the `config` package ships in the distribution and add a regression test
+  covering finding detection paths (#2)
+- Document contributor workflow conventions and clarify expected scan output in
+  the usage guide (#3)
+- Reorganise and expand audit/fetch/scan tests, introduce coverage tooling, and
+  enforce an 80% coverage gate in CI (#4)
+
 ## v0.1.0 - 2025-09-17
 
 - Initial public release of the Shai-Hulud Audit Toolkit
