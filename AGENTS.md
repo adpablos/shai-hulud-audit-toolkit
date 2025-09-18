@@ -133,6 +133,10 @@ The default audit (`scripts/audit.py`) fetches advisories into
   plus test evidence in the body (`## Summary` / `## Testing`).
 - Always work on a feature branch, push it to origin, and open a PR; merge via
   the PR after reviews/tests instead of using local fast-forwards.
+- Bundle multiple compatible changes by merging their PRs into a
+  `release/x.y.z` branch. Once everything that should ship is merged, bump
+  `pyproject.toml` + `CHANGELOG.md` on the release branch, then raise a single
+  PR from `release/x.y.z` back to `main`.
 
 ## Housekeeping
 
