@@ -62,6 +62,7 @@ Useful modifiers (see [docs/USAGE.md](docs/USAGE.md) for more examples):
 
 - `--skip-node-modules` – ignore installed node_modules trees
 - `--skip-global` – skip global npm inspection
+- `--skip-cache` – skip cached npm tarballs (cache inspection runs by default; override the location with `--npm-cache-dir`)
 - `--skip-scan` – fetch advisories but do not run the scanner
 - `--skip-fetch --advisory path/to/file.json` – reuse a previously generated
   advisory instead of fetching

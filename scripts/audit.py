@@ -80,6 +80,15 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         help="Skip inspecting globally installed npm packages (default: inspect them).",
     )
     parser.add_argument(
+        "--skip-cache",
+        action="store_true",
+        help="Skip inspecting the npm cache index (~/.npm/_cacache/index-v5).",
+    )
+    parser.add_argument(
+        "--npm-cache-dir",
+        help="Override the npm cache directory passed to the scanner.",
+    )
+    parser.add_argument(
         "--json",
         action="store_true",
         help="Emit scan findings as JSON (stdout).",
@@ -145,8 +154,12 @@ def run(argv: list[str] | None = None) -> int:
         scan_args.append("--include-node-modules")
     if check_global:
         scan_args.append("--check-global")
+    if args.skip_cache:
+        scan_args.append("--skip-cache")
     if emit_json:
         scan_args.append("--json")
+    if args.npm_cache_dir:
+        scan_args.extend(["--npm-cache-dir", str(Path(args.npm_cache_dir).expanduser().resolve())])
 
     scan_args.extend(["--advisory-file", str(fetch_summary["output_path"])])
     scan_args.extend(["--log-dir", str(scan_log_dir)])

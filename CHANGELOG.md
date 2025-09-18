@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+- Inspect cached npm tarballs by default and expose `--skip-cache` /
+  `--npm-cache-dir` controls, surfacing compromised cache hits in JSON
+  output and logs (#9)
+
 ## v0.1.1 - 2025-09-17
 
 - Ensure the `config` package ships in the distribution and add a regression test

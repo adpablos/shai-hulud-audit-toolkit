@@ -17,6 +17,14 @@ def _write_json(path: Path, payload: object) -> None:
     path.write_text(json.dumps(payload), encoding="utf-8")
 
 
+def _cache_entry(url: str) -> dict:
+    return {
+        "metadata": {
+            "url": url,
+        }
+    }
+
+
 def test_load_advisory_index_handles_varied_schemas(tmp_path: Path) -> None:
     path = tmp_path / "advisory_items.json"
     _write_json(
@@ -100,3 +108,38 @@ def test_gather_findings_respects_node_module_toggle(monkeypatch, tmp_path: Path
     assert stats_full.manifests == 1
     assert stats_full.node_module_manifests == 1
     assert stats_full.lockfiles == Counter()
+
+
+def test_parse_cache_entry_handles_scoped_packages() -> None:
+    entry = _cache_entry("https://registry.npmjs.org/@scope/example/-/example-1.2.3.tgz")
+    package, version, url = scanner.parse_cache_entry(entry)
+    assert package == "@scope/example"
+    assert version == "1.2.3"
+    assert url.endswith("example-1.2.3.tgz")
+
+
+def test_parse_cache_entry_normalises_version() -> None:
+    entry = _cache_entry("https://registry.npmjs.org/example/-/example-v0.9.0.tar.gz")
+    package, version, _ = scanner.parse_cache_entry(entry)
+    assert package == "example"
+    assert version == "0.9.0"
+
+
+def test_scan_npm_cache_deduplicates_entries(tmp_path: Path, monkeypatch) -> None:
+    index_dir = tmp_path / "index-v5" / "aa" / "bb"
+    index_dir.mkdir(parents=True, exist_ok=True)
+    entry_path = index_dir / "entry"
+
+    record = _cache_entry("https://registry.npmjs.org/example/-/example-1.0.0.tgz")
+    duplicate = _cache_entry("https://registry.npmjs.org/example/-/example-1.0.0.tgz")
+    other = _cache_entry("https://registry.npmjs.org/other/-/other-2.0.0.tgz")
+
+    payloads = [record, duplicate, other]
+    content_lines = ["", *[f"deadbeef\t{json.dumps(item)}" for item in payloads]]
+    entry_path.write_text("\n".join(content_lines), encoding="utf-8")
+
+    monkeypatch.setattr(scanner, "COMPROMISED_PACKAGES", {"example": {"1.0.0"}, "other": {"3.0.0"}})
+
+    findings, inspected = scanner.scan_npm_cache(tmp_path / "index-v5")
+    assert inspected == 2
+    assert [(finding.package, finding.version) for finding in findings] == [("example", "1.0.0")]

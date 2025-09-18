@@ -10,6 +10,14 @@ def _write_json(path: Path, content: dict) -> None:
     path.write_text(json.dumps(content, indent=2), encoding="utf-8")
 
 
+def _write_cache_index(base: Path, records: list[dict]) -> None:
+    index_dir = base / "index-v5" / "aa" / "bb"
+    index_dir.mkdir(parents=True, exist_ok=True)
+    entry_path = index_dir / "entry"
+    lines = ["", *[f"feedface\t{json.dumps(record)}" for record in records]]
+    entry_path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def test_run_reports_findings_across_sources(tmp_path, capsys):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -61,6 +69,7 @@ def test_run_reports_findings_across_sources(tmp_path, capsys):
         [
             "--include-node-modules",
             "--json",
+            "--skip-cache",
             "--advisory-file",
             str(advisory_path),
             "--log-dir",
@@ -98,6 +107,7 @@ def test_run_reports_findings_across_sources(tmp_path, capsys):
     exit_code_plain = scanner.run(
         [
             "--include-node-modules",
+            "--skip-cache",
             "--advisory-file",
             str(advisory_path),
             "--log-dir",
@@ -144,6 +154,7 @@ def test_run_includes_global_findings(tmp_path, capsys, monkeypatch):
             "--include-node-modules",
             "--check-global",
             "--json",
+            "--skip-cache",
             "--advisory-file",
             str(advisory_path),
             "--log-dir",
@@ -159,3 +170,55 @@ def test_run_includes_global_findings(tmp_path, capsys, monkeypatch):
     assert findings == [global_finding.to_dict()]
     assert "Global npm scan inspected 3 packages" in captured.err
     assert "Findings recorded" in captured.err
+
+
+def test_run_reports_cache_findings(tmp_path, capsys):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    advisory_path = tmp_path / "advisory.json"
+    _write_json(
+        advisory_path,
+        {
+            "items": [
+                {"package": "@scope/compromised", "version": "1.0.0"},
+            ]
+        },
+    )
+
+    cache_root = tmp_path / "npm-cache"
+    compromised_record = {
+        "metadata": {
+            "url": "https://registry.npmjs.org/@scope/compromised/-/compromised-1.0.0.tgz",
+        }
+    }
+    benign_record = {
+        "metadata": {
+            "url": "https://registry.npmjs.org/harmless/-/harmless-2.0.0.tgz",
+        }
+    }
+    _write_cache_index(cache_root, [compromised_record, benign_record])
+
+    log_dir = tmp_path / "logs"
+
+    exit_code = scanner.run(
+        [
+            "--json",
+            "--advisory-file",
+            str(advisory_path),
+            "--log-dir",
+            str(log_dir),
+            "--npm-cache-dir",
+            str(cache_root),
+            str(workspace),
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    findings = json.loads(captured.out)
+    assert len(findings) == 1
+    assert findings[0]["package"] == "@scope/compromised"
+    assert findings[0]["source"] == "npm-cache"
+    assert "compromised-1.0.0.tgz" in findings[0]["evidence"]
+    assert "Cache scan inspected" in captured.err

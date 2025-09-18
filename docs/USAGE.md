@@ -42,6 +42,15 @@ shai-hulud-audit --skip-node-modules --skip-global /srv/app /tmp/build
 Scans only the specified paths, ignoring `node_modules` subtrees and the global
 npm install tree.
 
+### Skip cached npm tarballs
+```bash
+shai-hulud-audit --skip-cache
+```
+Cache inspection runs by default. Use this flag if the cache directory is
+unavailable or expensive to mount. Override the cache root when needed with
+`--npm-cache-dir /custom/cache` (useful on CI or when scanning a mounted home
+directory snapshot).
+
 ## Configuration & Parser Hints
 
 Advisory sources are defined in `config/shai_hulud_sources.json`:
@@ -67,6 +76,9 @@ Advisory sources are defined in `config/shai_hulud_sources.json`:
   `resolve` package tests). Any new warnings indicate real issues.
 - Use `--json` to capture findings in machine-readable form for follow-up
   automation.
+- Cache inspection runs by default. Combine `--skip-cache` with `--npm-cache-dir`
+  to point at a temporary cache snapshot without touching the live cache when
+  needed.
 
 ## Interpreting Scan Output
 
