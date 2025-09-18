@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+*.log
+*.egg-info/
+*.egg
+
+# Virtual envs
+.env/
+.venv/
+venv/
+
+# Project outputs
+logs/
+!logs/.gitkeep
+data/
+!data/.gitkeep
+
+# VS Code / IDE
+.vscode/
+.idea/
+
+# pytest cache
+.pytest_cache/
+
+# Ruff cache
+.ruff_cache/

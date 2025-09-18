@@ -1,0 +1,39 @@
+[build-system]
+requires = ["setuptools>=67", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "shai-hulud-audit-toolkit"
+version = "0.1.0"
+description = "Fetch and scan for npm packages compromised in the Shai-Hulud attack."
+readme = "README.md"
+authors = [{name = "Shai-Hulud Audit Toolkit Contributors"}]
+license = {text = "MIT License"}
+requires-python = ">=3.10"
+dependencies = []
+keywords = ["security", "npm", "supply-chain", "audit"]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/example/shai-hulud-audit-toolkit"
+
+[project.scripts]
+shai-hulud-audit = "scripts.audit:run"
+shai-hulud-fetch = "scripts.fetch:run"
+shai-hulud-scan = "scripts.scan:run"
+
+[tool.ruff]
+line-length = 140
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F"]
+ignore = ["E203", "E402"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
