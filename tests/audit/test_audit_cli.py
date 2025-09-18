@@ -107,3 +107,36 @@ def test_full_run_invokes_fetch_and_scan(monkeypatch, tmp_path):
     result = audit.run(["--skip-node-modules", "--skip-global", "--advisory", str(output)])
     assert result == 0
     assert "argv" in scan_calls
+
+
+def test_fetch_zero_items_skips_scan(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    _setup_home(monkeypatch, home)
+
+    advisory = tmp_path / "data" / "advisory.json"
+    log_dir = tmp_path / "logs"
+
+    def fake_fetch_sources(**kwargs):
+        output_path: Path = kwargs["output_path"]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps({"items": []}), encoding="utf-8")
+        return {
+            "output_path": output_path,
+            "log_path": log_dir / "fetch.log",
+            "counts": {"items": 0, "packages": 0},
+        }
+
+    def fail_scan(argv):  # pragma: no cover - should never execute
+        raise AssertionError("scan should be skipped when no items are fetched")
+
+    monkeypatch.setattr(audit, "fetch_sources", fake_fetch_sources)
+    monkeypatch.setattr("scripts.scan.run", fail_scan)
+
+    result = audit.run([
+        "--advisory",
+        str(advisory),
+        "--log-dir",
+        str(log_dir),
+    ])
+
+    assert result == 2

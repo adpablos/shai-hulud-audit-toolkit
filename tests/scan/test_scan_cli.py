@@ -2,6 +2,7 @@ import json
 from pathlib import Path
 
 import scripts.scan as scanner
+from scripts.scan import Finding
 
 
 def _write_json(path: Path, content: dict) -> None:
@@ -114,3 +115,47 @@ def test_run_reports_findings_across_sources(tmp_path, capsys):
     assert "- example@1.0.0 (package-lock.json)" in plain_capture.err
     assert "- example@1.0.0 (node_modules/example/package.json)" in plain_capture.err
     assert "Findings recorded" in plain_capture.err
+
+
+def test_run_includes_global_findings(tmp_path, capsys, monkeypatch):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    _write_json(workspace / "package.json", {"name": "fixture", "dependencies": {"harmless": "2.0.0"}})
+
+    advisory_path = tmp_path / "advisory.json"
+    _write_json(advisory_path, {"items": [{"package": "global-package", "version": "4.5.6"}]})
+
+    log_dir = tmp_path / "logs"
+
+    global_finding = Finding(
+        package="global-package",
+        version="4.5.6",
+        source="npm-global",
+        evidence="global:global-package",
+    )
+
+    def fake_global_scan():
+        return [global_finding], 3
+
+    monkeypatch.setattr(scanner, "scan_global_npm", fake_global_scan)
+
+    exit_code = scanner.run(
+        [
+            "--include-node-modules",
+            "--check-global",
+            "--json",
+            "--advisory-file",
+            str(advisory_path),
+            "--log-dir",
+            str(log_dir),
+            str(workspace),
+        ]
+    )
+
+    assert exit_code == 1
+
+    captured = capsys.readouterr()
+    findings = json.loads(captured.out)
+    assert findings == [global_finding.to_dict()]
+    assert "Global npm scan inspected 3 packages" in captured.err
+    assert "Findings recorded" in captured.err

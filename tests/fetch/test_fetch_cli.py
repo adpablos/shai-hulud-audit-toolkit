@@ -95,3 +95,50 @@ def test_load_sources_config_validates_entries(tmp_path):
 
     with pytest.raises(ValueError, match="Unsupported parser hint"):
         fetch.load_sources_config(config_path)
+
+
+def test_fetch_sources_handles_failures(monkeypatch, tmp_path):
+    config_path = tmp_path / "sources.json"
+    _write_json(
+        config_path,
+        {
+            "sources": [
+                "https://ok.example.com",
+                "https://fail.example.com",
+            ]
+        },
+    )
+
+    output_path = tmp_path / "out.json"
+    log_dir = tmp_path / "logs"
+
+    def fake_setup_logging(target_log_dir: Path, level: str) -> Path:
+        target_log_dir.mkdir(parents=True, exist_ok=True)
+        log_file = target_log_dir / "fetch.log"
+        log_file.write_text("stub log", encoding="utf-8")
+        return log_file
+
+    def fake_fetch_url(url: str, timeout: int):
+        if url == "https://ok.example.com":
+            return ("package-three@3.0.0", "200 OK", "2025-01-01T00:00:02Z")
+        return (None, "HTTPError:500", "2025-01-01T00:00:03Z")
+
+    monkeypatch.setattr(fetch, "setup_logging", fake_setup_logging)
+    monkeypatch.setattr(fetch, "fetch_url", fake_fetch_url)
+
+    summary = fetch.fetch_sources(
+        config_path=config_path,
+        output_path=output_path,
+        timeout=5,
+        log_dir=log_dir,
+        log_level="INFO",
+    )
+
+    assert summary["counts"] == {"items": 1, "packages": 1}
+    status_mapping = {entry["url"]: entry for entry in summary["sources"]}
+    assert status_mapping["https://ok.example.com"]["status"] == "200 OK"
+    assert status_mapping["https://fail.example.com"]["status"].startswith("HTTPError")
+
+    payload = json.loads(output_path.read_text(encoding="utf-8"))
+    assert payload["counts"] == {"items": 1, "packages": 1}
+    assert payload["items"][0]["package"] == "package-three"
