@@ -96,6 +96,7 @@ The default audit (`scripts/audit.py`) fetches advisories into
 - `pip install -r requirements-dev.txt && pip install -e .`
 - `ruff check .`
 - `pytest`
+- `pytest --cov --cov-report=term-missing` when you want a coverage snapshot
 - Optional: quick audit run with `--skip-fetch` when touching scan logic.
 
 ## Logging & Error Handling
