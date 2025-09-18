@@ -17,6 +17,8 @@ logs/
 !logs/.gitkeep
 data/
 !data/.gitkeep
+build/
+dist/
 
 # VS Code / IDE
 .vscode/

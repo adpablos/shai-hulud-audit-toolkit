@@ -1,12 +1,7 @@
 import json
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-import scripts.audit as runner  # noqa: E402
+import scripts.audit as audit
 
 
 class DummyFetchResult(dict):
@@ -25,7 +20,7 @@ def _setup_home(monkeypatch, home: Path) -> None:
 
 def test_skip_both_fetch_and_scan_is_rejected(tmp_path, monkeypatch):
     _setup_home(monkeypatch, tmp_path / "home")
-    result = runner.run(["--skip-fetch", "--skip-scan"])
+    result = audit.run(["--skip-fetch", "--skip-scan"])
     assert result == 2
 
 
@@ -35,7 +30,7 @@ def test_skip_fetch_still_runs_scan(monkeypatch, tmp_path):
 
     advisory = tmp_path / "data" / "advisory.json"
     advisory.parent.mkdir(parents=True)
-    advisory.write_text(json.dumps({"items": []}))
+    advisory.write_text(json.dumps({"items": []}), encoding="utf-8")
 
     called = {}
 
@@ -45,13 +40,15 @@ def test_skip_fetch_still_runs_scan(monkeypatch, tmp_path):
 
     monkeypatch.setattr("scripts.scan.run", fake_scan)
 
-    result = runner.run([
-        "--skip-fetch",
-        "--advisory",
-        str(advisory),
-        "--skip-node-modules",
-        "--skip-global",
-    ])
+    result = audit.run(
+        [
+            "--skip-fetch",
+            "--advisory",
+            str(advisory),
+            "--skip-node-modules",
+            "--skip-global",
+        ]
+    )
 
     assert result == 0
     assert "scan" in called
@@ -65,12 +62,12 @@ def test_fetch_only_with_skip_scan(monkeypatch, tmp_path):
 
     def fake_fetch_sources(**kwargs):
         kwargs["output_path"].parent.mkdir(parents=True, exist_ok=True)
-        kwargs["output_path"].write_text(json.dumps({"items": []}))
+        kwargs["output_path"].write_text(json.dumps({"items": []}), encoding="utf-8")
         return DummyFetchResult(kwargs["output_path"])
 
-    monkeypatch.setattr(runner, "fetch_sources", fake_fetch_sources)
+    monkeypatch.setattr(audit, "fetch_sources", fake_fetch_sources)
 
-    result = runner.run(["--skip-scan", "--advisory", str(output)])
+    result = audit.run(["--skip-scan", "--advisory", str(output)])
     assert result == 0
 
 
@@ -93,7 +90,8 @@ def test_full_run_invokes_fetch_and_scan(monkeypatch, tmp_path):
                         }
                     ]
                 }
-            )
+            ),
+            encoding="utf-8",
         )
         return DummyFetchResult(kwargs["output_path"])
 
@@ -103,9 +101,42 @@ def test_full_run_invokes_fetch_and_scan(monkeypatch, tmp_path):
         scan_calls["argv"] = argv
         return 0
 
-    monkeypatch.setattr(runner, "fetch_sources", fake_fetch_sources)
+    monkeypatch.setattr(audit, "fetch_sources", fake_fetch_sources)
     monkeypatch.setattr("scripts.scan.run", fake_scan)
 
-    result = runner.run(["--skip-node-modules", "--skip-global", "--advisory", str(output)])
+    result = audit.run(["--skip-node-modules", "--skip-global", "--advisory", str(output)])
     assert result == 0
     assert "argv" in scan_calls
+
+
+def test_fetch_zero_items_skips_scan(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    _setup_home(monkeypatch, home)
+
+    advisory = tmp_path / "data" / "advisory.json"
+    log_dir = tmp_path / "logs"
+
+    def fake_fetch_sources(**kwargs):
+        output_path: Path = kwargs["output_path"]
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_text(json.dumps({"items": []}), encoding="utf-8")
+        return {
+            "output_path": output_path,
+            "log_path": log_dir / "fetch.log",
+            "counts": {"items": 0, "packages": 0},
+        }
+
+    def fail_scan(argv):  # pragma: no cover - should never execute
+        raise AssertionError("scan should be skipped when no items are fetched")
+
+    monkeypatch.setattr(audit, "fetch_sources", fake_fetch_sources)
+    monkeypatch.setattr("scripts.scan.run", fail_scan)
+
+    result = audit.run([
+        "--advisory",
+        str(advisory),
+        "--log-dir",
+        str(log_dir),
+    ])
+
+    assert result == 2
