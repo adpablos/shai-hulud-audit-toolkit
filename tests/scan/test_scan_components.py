@@ -1,15 +1,10 @@
 import json
-import sys
 from collections import Counter
 from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-import scripts.scan as scanner  # noqa: E402
+import scripts.scan as scanner
 
 
 def _write(path: Path, content: str) -> None:

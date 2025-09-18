@@ -1,12 +1,7 @@
 import json
-import sys
 from pathlib import Path
 
-ROOT = Path(__file__).resolve().parents[1]
-if str(ROOT) not in sys.path:
-    sys.path.insert(0, str(ROOT))
-
-import scripts.scan as scanner  # noqa: E402
+import scripts.scan as scanner
 
 
 def _write_json(path: Path, content: dict) -> None:
