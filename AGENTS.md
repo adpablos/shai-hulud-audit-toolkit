@@ -110,8 +110,27 @@ The default audit (`scripts/audit.py`) fetches advisories into
 
 - `CHANGELOG.md` records every release; current entry `v0.1.0` covers the
   initial public drop (script renames, parser validation, skip flags, lint/tests)
-- Update both `pyproject.toml` and the changelog when shipping a new version;
-  tag releases appropriately
+- Keep a short "Unreleased" section at the top of `CHANGELOG.md` and drop one
+  bullet there per merged PR; promote it to a dated version entry when cutting a
+  release.
+- Cut releases from a short-lived `release/x.y.z` branch: bump
+  `project.version` in `pyproject.toml`, polish the changelog, then merge via PR
+  and tag.
+- For urgent behavioural fixes that need shipping immediately, it's acceptable
+  to bump the version and changelog in the feature branch itself, but prefer
+  batching on the release branch.
+
+## Git Workflow
+
+- Branch names follow `<type>/<topic>`: use `fix/` for bug fixes, `feat/` for new
+  functionality, `docs/` for documentation-only updates, and `chore/` for
+  maintenance. Keep the topic kebab-cased (e.g., `fix/package-discovery`).
+- Commits use the pattern `<type>: <imperative summary>` with the same `type`
+  values as branches (for example, `fix: handle package discovery explicitly`).
+- Pull request titles mirror the main commit summary and enumerate key changes
+  plus test evidence in the body (`## Summary` / `## Testing`).
+- Always work on a feature branch, push it to origin, and open a PR; merge via
+  the PR after reviews/tests instead of using local fast-forwards.
 
 ## Housekeeping
 
