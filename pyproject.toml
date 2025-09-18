@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Fetch and scan for npm packages compromised in the Shai-Hulud attack."
 readme = "README.md"
 authors = [{name = "Shai-Hulud Audit Toolkit Contributors"}]
-license = {text = "MIT License"}
+license = {text = "MIT"}
 requires-python = ">=3.10"
 dependencies = []
 keywords = ["security", "npm", "supply-chain", "audit"]
@@ -25,6 +25,12 @@ Homepage = "https://github.com/example/shai-hulud-audit-toolkit"
 shai-hulud-audit = "scripts.audit:run"
 shai-hulud-fetch = "scripts.fetch:run"
 shai-hulud-scan = "scripts.scan:run"
+
+[tool.setuptools]
+packages = ["scripts", "config"]
+
+[tool.setuptools.package-data]
+config = ["*.json"]
 
 [tool.ruff]
 line-length = 140
