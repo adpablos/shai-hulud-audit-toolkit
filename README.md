@@ -127,6 +127,12 @@ pytest
 See [`docs/TESTING.md`](docs/TESTING.md) for a detailed map of the suite and
 guidance on where to add new coverage.
 
+To include a coverage summary:
+
+```bash
+pytest --cov --cov-report=term-missing
+```
+
 Our GitHub Actions workflow runs the tests on every push and pull request.
 
 For linting and formatting checks:

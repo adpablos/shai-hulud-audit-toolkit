@@ -49,6 +49,7 @@ tests/
 ```
 pytest            # run everything
 pytest tests/scan # focus on scanner tests
+pytest --cov --cov-report=term-missing  # include line coverage summary
 ```
 
 Tests rely solely on stdlib and pytest; no network calls are made thanks to monkeypatching.
