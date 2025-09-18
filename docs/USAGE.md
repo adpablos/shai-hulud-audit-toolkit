@@ -8,7 +8,8 @@ common task-based workflows, configuration knobs, and troubleshooting tips.
 1. [Common Workflows](#common-workflows)
 2. [Configuration & Parser Hints](#configuration--parser-hints)
 3. [Operational Tips](#operational-tips)
-4. [Troubleshooting](#troubleshooting)
+4. [Interpreting Scan Output](#interpreting-scan-output)
+5. [Troubleshooting](#troubleshooting)
 
 ## Common Workflows
 
@@ -66,6 +67,43 @@ Advisory sources are defined in `config/shai_hulud_sources.json`:
   `resolve` package tests). Any new warnings indicate real issues.
 - Use `--json` to capture findings in machine-readable form for follow-up
   automation.
+
+## Interpreting Scan Output
+
+### Clean run (exit code `0`)
+
+```
+INFO: Detailed execution log: /tmp/.../logs/shai_hulud_scan_YYYYMMDD_HHMMSS.log
+INFO: Loading advisory data from /tmp/.../advisory.json
+INFO: Indexed 1 packages covering 1 compromised versions.
+INFO: Scanning /tmp/.../workspace
+INFO: Summary for /tmp/.../workspace: 1 manifests (0 within node_modules); lockfiles: none.
+INFO: Aggregate summary: 1 manifests scanned (0 within node_modules); lockfiles: none.
+INFO: No compromised packages detected.
+INFO: Scan completed successfully. Log retained at /tmp/.../logs/shai_hulud_scan_YYYYMMDD_HHMMSS.log
+```
+
+No matches were found and the process exited with status `0`.
+
+### Findings present (exit code `1`)
+
+```
+INFO: Detailed execution log: /tmp/.../logs/shai_hulud_scan_YYYYMMDD_HHMMSS.log
+INFO: Loading advisory data from /tmp/.../advisory.json
+INFO: Indexed 1 packages covering 1 compromised versions.
+INFO: Scanning /tmp/.../workspace
+INFO: Summary for /tmp/.../workspace: 1 manifests (0 within node_modules); lockfiles: 1× package-lock.json.
+INFO: Aggregate summary: 1 manifests scanned (0 within node_modules); lockfiles: 1× package-lock.json.
+WARNING: Detected compromised dependencies:
+WARNING: - example@1.0.0 (package-lock.json) -> packages entry: node_modules/example
+WARNING: - example@1.0.0 (package.json) -> dependencies -> example = 1.0.0
+WARNING: Total findings: 2
+WARNING: Findings recorded in /tmp/.../logs/shai_hulud_scan_YYYYMMDD_HHMMSS.log
+```
+
+The scanner elevates to `WARNING` level for each finding and terminates with
+status `1`. Review the referenced log file for the full trace and consider
+rerunning with `--json` to capture the findings programmatically.
 
 ## Troubleshooting
 
