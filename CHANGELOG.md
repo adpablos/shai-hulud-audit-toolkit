@@ -5,9 +5,11 @@
 - Comprehensive documentation enhancements: Add GitHub badges (CI, License, Python version),
   Features at a Glance comparison table, "Why This Tool?" section with value proposition,
   example output showcasing all report formats, improved Quick Start section. Create
-  CONTRIBUTING.md with development guidelines and branching strategy. Enhance docs/USAGE.md
-  with extensive CI/CD integration examples (GitHub Actions, GitLab CI, Jenkins, CircleCI,
-  Docker, pre-commit hooks) and best practices. Updated cross-references throughout (#15)
+  CONTRIBUTING.md transparently documenting AI-first development model with human oversight,
+  separate guidance for human contributors and AI agents, and development philosophy statement.
+  Enhance docs/USAGE.md with extensive CI/CD integration examples (GitHub Actions, GitLab CI,
+  Jenkins, CircleCI, Docker, pre-commit hooks) and best practices. Updated cross-references
+  throughout (#15)
 - **BREAKING INTERNAL**: Comprehensive refactoring of `scripts/scan.py` to meet code
   quality standards. Module decomposed from 1,891 lines (378% over limit) into modular
   architecture with all modules under 500 lines (largest: 245 lines). Main entry point

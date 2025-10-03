@@ -1,12 +1,27 @@
 # Contributing to Shai-Hulud Audit Toolkit
 
-Thank you for your interest in contributing to the Shai-Hulud Audit Toolkit!
+Thank you for your interest in contributing!
 
-## Getting Started
+## About This Project
 
-Please read our [Agent Primer (AGENTS.md)](AGENTS.md) for comprehensive development guidelines, project architecture, and detailed workflow instructions.
+This toolkit is built **collaboratively by AI agents (Codex/Claude Code) with human-in-the-loop review**. The development model is intentionally transparent:
 
-## Quick Contribution Guide
+- Code is primarily written by AI assistants following structured guidelines in [AGENTS.md](AGENTS.md)
+- A human maintainer reviews, directs, and approves all changes
+- Quality is maintained through automated testing (80% coverage), linting, and CI checks
+
+This AI-first approach enables rapid iteration while maintaining production-quality standards.
+
+## How to Contribute
+
+We welcome contributions of all kinds:
+
+- **Report issues** - Bug reports, feature requests, security findings
+- **Improve documentation** - Clarify usage, add examples, fix typos
+- **Submit code** - Follow the development workflow below
+- **Provide feedback** - Help us understand what works and what doesn't
+
+## Quick Start
 
 1. **Fork the repository** and create a feature branch:
    ```bash
@@ -156,10 +171,21 @@ When filing issues, please include:
 
 ## Questions?
 
-- Check [AGENTS.md](AGENTS.md) for detailed guidance
-- Check [docs/USAGE.md](docs/USAGE.md) for usage examples
 - Open an issue for discussion
 - Review existing issues and PRs
+- Check [docs/USAGE.md](docs/USAGE.md) for usage examples
+- See [AGENTS.md](AGENTS.md) for architectural context and development guidelines
+
+## Development Philosophy
+
+This project demonstrates that AI-assisted development can produce production-quality security tools when combined with:
+
+- **Rigorous testing** - 80% coverage enforced by CI
+- **Clear standards** - Ruff linting, type annotations, code quality metrics
+- **Human judgment** - Final review and approval of all changes
+- **Transparency** - Open documentation of the AI-first development model
+
+We believe this hybrid approach represents a viable future for open source development.
 
 ## License
 
