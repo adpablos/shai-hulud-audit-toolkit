@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+- **BREAKING INTERNAL**: Comprehensive refactoring of `scripts/scan.py` to meet code
+  quality standards. Module decomposed from 1,891 lines (378% over limit) into modular
+  architecture with all modules under 500 lines (largest: 245 lines). Main entry point
+  reduced from 1,891 to 353 lines. Business logic functions refactored to minimize
+  complexity (e.g., advisory parser split into 4 clear schema handlers). Code organized
+  into `scan_core` package with clear separation: models, config, utils, advisory,
+  scanner, scanners (lockfiles, package_json, iocs, patterns, exfiltration, cache,
+  node_modules), and reporting (formatters, structured, compact, json_output). Public
+  API maintained for backward compatibility. Updated code quality standards in CLAUDE.md
+  to emphasize pragmatic maintainability over rigid metrics (#17)
 - Enhance PyPI discoverability with expanded keywords, comprehensive classifiers,
   and complete project URLs in package metadata (#16)
 - Add ANSI color-coded terminal output with automatic TTY detection, `--no-color`
