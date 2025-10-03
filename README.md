@@ -20,6 +20,8 @@ and audit their local environments for any compromised package versions.
   StepSecurity (and easy to extend).
 - **Structured advisories** – writes `data/compromised_shaihulud.json` with every
   compromised `package@version` plus the confirming source URLs.
+- **IOC hash detection** – scans for known malicious Shai-Hulud payload hashes
+  (SHA-256) in suspicious files like `bundle.js`, `index.js`, and install scripts.
 - **Concise logging** – per-source fetch logs and per-path scan stats saved under
   `logs/`.
 
@@ -62,6 +64,8 @@ Useful modifiers (see [docs/USAGE.md](docs/USAGE.md) for more examples):
 
 - `--skip-node-modules` – ignore installed node_modules trees
 - `--skip-global` – skip global npm inspection
+- `--skip-cache` – skip cached npm tarballs (cache inspection runs by default; override the location with `--npm-cache-dir`)
+- `--no-hash-iocs` – disable hash-based IOC detection (enabled by default)
 - `--skip-scan` – fetch advisories but do not run the scanner
 - `--skip-fetch --advisory path/to/file.json` – reuse a previously generated
   advisory instead of fetching

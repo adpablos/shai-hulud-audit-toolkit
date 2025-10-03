@@ -1,3 +1,4 @@
+import hashlib
 import json
 from pathlib import Path
 
@@ -8,6 +9,14 @@ from scripts.scan import Finding
 def _write_json(path: Path, content: dict) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(content, indent=2), encoding="utf-8")
+
+
+def _write_cache_index(base: Path, records: list[dict]) -> None:
+    index_dir = base / "index-v5" / "aa" / "bb"
+    index_dir.mkdir(parents=True, exist_ok=True)
+    entry_path = index_dir / "entry"
+    lines = ["", *[f"feedface\t{json.dumps(record)}" for record in records]]
+    entry_path.write_text("\n".join(lines), encoding="utf-8")
 
 
 def test_run_reports_findings_across_sources(tmp_path, capsys):
@@ -61,6 +70,7 @@ def test_run_reports_findings_across_sources(tmp_path, capsys):
         [
             "--include-node-modules",
             "--json",
+            "--skip-cache",
             "--advisory-file",
             str(advisory_path),
             "--log-dir",
@@ -98,6 +108,7 @@ def test_run_reports_findings_across_sources(tmp_path, capsys):
     exit_code_plain = scanner.run(
         [
             "--include-node-modules",
+            "--skip-cache",
             "--advisory-file",
             str(advisory_path),
             "--log-dir",
@@ -144,6 +155,7 @@ def test_run_includes_global_findings(tmp_path, capsys, monkeypatch):
             "--include-node-modules",
             "--check-global",
             "--json",
+            "--skip-cache",
             "--advisory-file",
             str(advisory_path),
             "--log-dir",
@@ -159,3 +171,165 @@ def test_run_includes_global_findings(tmp_path, capsys, monkeypatch):
     assert findings == [global_finding.to_dict()]
     assert "Global npm scan inspected 3 packages" in captured.err
     assert "Findings recorded" in captured.err
+
+
+def test_run_reports_cache_findings(tmp_path, capsys):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    advisory_path = tmp_path / "advisory.json"
+    _write_json(
+        advisory_path,
+        {
+            "items": [
+                {"package": "@scope/compromised", "version": "1.0.0"},
+            ]
+        },
+    )
+
+    cache_root = tmp_path / "npm-cache"
+    compromised_record = {
+        "metadata": {
+            "url": "https://registry.npmjs.org/@scope/compromised/-/compromised-1.0.0.tgz",
+        }
+    }
+    benign_record = {
+        "metadata": {
+            "url": "https://registry.npmjs.org/harmless/-/harmless-2.0.0.tgz",
+        }
+    }
+    _write_cache_index(cache_root, [compromised_record, benign_record])
+
+    log_dir = tmp_path / "logs"
+
+    exit_code = scanner.run(
+        [
+            "--json",
+            "--advisory-file",
+            str(advisory_path),
+            "--log-dir",
+            str(log_dir),
+            "--npm-cache-dir",
+            str(cache_root),
+            str(workspace),
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    findings = json.loads(captured.out)
+    assert len(findings) == 1
+    assert findings[0]["package"] == "@scope/compromised"
+    assert findings[0]["source"] == "npm-cache"
+    assert "compromised-1.0.0.tgz" in findings[0]["evidence"]
+    assert "Cache scan inspected" in captured.err
+
+
+def test_run_detects_hash_iocs(tmp_path, capsys, monkeypatch):
+    """Test that the CLI detects files with known malicious hashes."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    # Create a malicious bundle.js file
+    malicious_content = b"malicious payload content"
+    malicious_file = workspace / "bundle.js"
+    malicious_file.write_bytes(malicious_content)
+    malicious_hash = hashlib.sha256(malicious_content).hexdigest()
+
+    # Create a benign index.js file
+    benign_file = workspace / "index.js"
+    benign_file.write_bytes(b"benign content")
+
+    # Also create a package.json with a compromised dependency
+    _write_json(
+        workspace / "package.json",
+        {"name": "test-app", "dependencies": {"evil-pkg": "1.0.0"}}
+    )
+
+    # Create advisory file
+    advisory_path = tmp_path / "advisory.json"
+    _write_json(
+        advisory_path,
+        {"items": [{"package": "evil-pkg", "version": "1.0.0"}]}
+    )
+
+    # Temporarily set the malicious hashes
+    monkeypatch.setattr(scanner, "MALICIOUS_HASHES", {malicious_hash})
+
+    log_dir = tmp_path / "logs"
+
+    # Run with hash IOC detection enabled (default)
+    exit_code = scanner.run(
+        [
+            "--json",
+            "--advisory-file",
+            str(advisory_path),
+            "--log-dir",
+            str(log_dir),
+            "--skip-cache",
+            str(workspace),
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    findings = json.loads(captured.out)
+
+    # Should have both dependency and IOC findings
+    assert len(findings) == 2
+
+    dependency_findings = [f for f in findings if f["category"] == "dependency"]
+    ioc_findings = [f for f in findings if f["category"] == "ioc"]
+
+    assert len(dependency_findings) == 1
+    assert dependency_findings[0]["package"] == "evil-pkg"
+
+    assert len(ioc_findings) == 1
+    assert ioc_findings[0]["version"] == "bundle.js"
+    assert malicious_hash in ioc_findings[0]["evidence"]
+
+    # With --json flag, detailed output isn't printed to stderr
+
+
+def test_run_hash_iocs_disabled(tmp_path, capsys, monkeypatch):
+    """Test that hash IOC detection can be disabled."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    # Create a malicious bundle.js file
+    malicious_content = b"malicious payload content"
+    malicious_file = workspace / "bundle.js"
+    malicious_file.write_bytes(malicious_content)
+    malicious_hash = hashlib.sha256(malicious_content).hexdigest()
+
+    # Create advisory file with at least one item (scanner requires non-empty advisory)
+    advisory_path = tmp_path / "advisory.json"
+    _write_json(advisory_path, {"items": [{"package": "some-pkg", "version": "9.9.9"}]})
+
+    # Temporarily set the malicious hashes
+    monkeypatch.setattr(scanner, "MALICIOUS_HASHES", {malicious_hash})
+
+    log_dir = tmp_path / "logs"
+
+    # Run with hash IOC detection disabled
+    exit_code = scanner.run(
+        [
+            "--json",
+            "--no-hash-iocs",
+            "--advisory-file",
+            str(advisory_path),
+            "--log-dir",
+            str(log_dir),
+            "--skip-cache",
+            str(workspace),
+        ]
+    )
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    findings = json.loads(captured.out)
+
+    # Should have no findings when hash detection is disabled
+    assert len(findings) == 0
+    # With --json and no findings, it just shows successful completion
+    assert "Scan completed successfully" in captured.err

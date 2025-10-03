@@ -8,6 +8,7 @@ that matches the Shai-Hulud supply-chain compromise advisory.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -19,6 +20,7 @@ from collections import Counter
 from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Sequence, Set, Tuple
+from urllib.parse import unquote, urlparse
 
 LOGGER = logging.getLogger("shai-hulud")
 
@@ -31,6 +33,30 @@ SUPPRESSED_WARNING_SUBSTRINGS = (
     "resolve/test/resolver/malformed_package_json/package.json",
 )
 SUPPRESSED_WARNING_SEEN: Set[str] = set()
+
+CACHE_SOURCE = "npm-cache"
+
+# Known malicious Shai-Hulud payload SHA-256 hashes
+MALICIOUS_HASHES: Set[str] = {
+    "de0e25a3e6c1e1e5998b306b7141b3dc4c0088da9d7bb47c1c00c91e6e4f85d6",
+    "81d2a004a1bca6ef87a1caf7d0e0b355ad1764238e40ff6d1b1cb77ad4f595c3",
+    "83a650ce44b2a9854802a7fb4c202877815274c129af49e6c2d1d5d5d55c501e",
+    "4b2399646573bb737c4969563303d8ee2e9ddbd1b271f1ca9e35ea78062538db",
+    "dc67467a39b70d1cd4c1f7f7a459b35058163592f4a9e8fb4dffcbba98ef210c",
+    "46faab8ab153fae6e80e7cca38eab363075bb524edd79e42269217a083628f09",
+    "b74caeaa75e077c99f7d44f46daaf9796a3be43ecf24f2a1fd381844669da777",
+}
+
+# File patterns to check for IOCs
+IOC_FILE_PATTERNS = [
+    "bundle.js",
+    "index.js",
+    "install.js",
+    "postinstall.js",
+]
+
+# Maximum file size to hash (10 MB)
+MAX_HASH_FILE_SIZE = 10 * 1024 * 1024
 
 
 @dataclass
@@ -167,9 +193,83 @@ class Finding:
     version: str
     source: str
     evidence: str
+    category: str = "dependency"  # "dependency" or "ioc"
 
     def to_dict(self) -> Dict[str, str]:
         return asdict(self)
+
+
+def resolve_cache_index_dir(override: Optional[str]) -> Path:
+    """Return the expected npm cache index directory."""
+    if override:
+        base = Path(override).expanduser()
+    else:
+        env_cache = os.environ.get("NPM_CONFIG_CACHE")
+        base = Path(env_cache).expanduser() if env_cache else Path.home() / ".npm"
+    base = base.resolve()
+    if base.name == "index-v5":
+        return base
+    if base.name == "_cacache":
+        return (base / "index-v5").resolve()
+    candidate = base / "index-v5"
+    if candidate.exists():
+        return candidate.resolve()
+    return (base / "_cacache" / "index-v5").resolve()
+
+
+def _extract_package_version_from_url(url: str) -> Optional[Tuple[str, str]]:
+    parsed = urlparse(url)
+    if parsed.scheme not in {"http", "https"}:
+        return None
+    path = unquote(parsed.path or "")
+    if not path:
+        return None
+    prefix, sep, suffix = path.rpartition("/-/")
+    if not sep or not suffix:
+        return None
+    package_path = prefix.lstrip("/")
+    if not package_path:
+        return None
+    filename = suffix.split("/")[-1]
+    if not filename:
+        return None
+    cleaned = filename
+    for ext in (".tar.gz", ".tgz", ".tar", ".zip"):
+        if cleaned.endswith(ext):
+            cleaned = cleaned[: -len(ext)]
+            break
+    if "-" not in cleaned:
+        return None
+    _name_segment, _, version_segment = cleaned.rpartition("-")
+    version = normalize_version(version_segment)
+    if not version:
+        return None
+    return unquote(package_path), version
+
+
+def parse_cache_entry(entry: Dict[str, object]) -> Optional[Tuple[str, str, str]]:
+    """Extract package, version, and URL from a cache index record."""
+    if not isinstance(entry, dict):
+        return None
+    entry_url: Optional[str] = None
+    metadata = entry.get("metadata")
+    if isinstance(metadata, dict):
+        url_value = metadata.get("url") or metadata.get("resolved")
+        if isinstance(url_value, str):
+            entry_url = url_value
+    if not entry_url:
+        key = entry.get("key")
+        if isinstance(key, str):
+            marker = key.find("http")
+            if marker != -1:
+                entry_url = key[marker:]
+    if not entry_url:
+        return None
+    parsed = _extract_package_version_from_url(entry_url)
+    if not parsed:
+        return None
+    package, version = parsed
+    return package, version, entry_url
 
 
 def load_json(path: Path) -> Optional[Dict[str, object]]:
@@ -487,6 +587,95 @@ def scan_global_npm() -> Tuple[List[Finding], int]:
     return findings, inspected
 
 
+def scan_npm_cache(index_dir: Path) -> Tuple[List[Finding], int]:
+    """Inspect the npm cache index for compromised tarballs."""
+    if not index_dir.exists():
+        LOGGER.info("Cache index directory %s not found; skipping cache scan.", index_dir)
+        return [], 0
+
+    findings: List[Finding] = []
+    inspected = 0
+    seen_records: Set[Tuple[str, str, str]] = set()
+
+    for entry_path in index_dir.rglob("*"):
+        if not entry_path.is_file():
+            continue
+        try:
+            raw_lines = entry_path.read_bytes().splitlines()
+        except (OSError, InterruptedError) as exc:  # noqa: PERF203 - explicit handling
+            LOGGER.debug("Unable to read cache index file %s: %s", entry_path, exc)
+            continue
+        for raw_line in raw_lines:
+            line = raw_line.strip()
+            if not line:
+                continue
+            try:
+                decoded = line.decode("utf-8")
+            except UnicodeDecodeError:
+                LOGGER.debug("Skipping non-UTF8 cache record in %s", entry_path)
+                continue
+            _digest, sep, payload = decoded.partition("\t")
+            if not sep:
+                continue
+            try:
+                entry = json.loads(payload)
+            except json.JSONDecodeError:
+                LOGGER.debug("Skipping unparsable cache record in %s", entry_path)
+                continue
+            parsed = parse_cache_entry(entry)
+            if not parsed:
+                continue
+            package, version, url = parsed
+            record_key = (package, version, url)
+            if record_key in seen_records:
+                continue
+            seen_records.add(record_key)
+            inspected += 1
+            match = check_version_match(package, version)
+            if match:
+                findings.append(
+                    Finding(
+                        package=package,
+                        version=match,
+                        source=CACHE_SOURCE,
+                        evidence=f"cache entry -> {url}",
+                    )
+                )
+    return findings, inspected
+
+
+def compute_file_hash(file_path: Path) -> Optional[str]:
+    """Compute SHA-256 hash of a file."""
+    try:
+        # Check file size first
+        if file_path.stat().st_size > MAX_HASH_FILE_SIZE:
+            LOGGER.debug("File %s exceeds size limit for hashing", file_path)
+            return None
+
+        sha256_hash = hashlib.sha256()
+        with file_path.open("rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256_hash.update(chunk)
+        return sha256_hash.hexdigest()
+    except (OSError, InterruptedError) as exc:
+        LOGGER.debug("Unable to hash file %s: %s", file_path, exc)
+        return None
+
+
+def scan_file_for_iocs(file_path: Path) -> Optional[Finding]:
+    """Check if a file matches known malicious hashes."""
+    file_hash = compute_file_hash(file_path)
+    if file_hash and file_hash in MALICIOUS_HASHES:
+        return Finding(
+            package="IOC",
+            version=file_path.name,
+            source=str(file_path),
+            evidence=f"SHA-256: {file_hash}",
+            category="ioc",
+        )
+    return None
+
+
 def collect_targets(paths: Sequence[str]) -> List[Path]:
     resolved: List[Path] = []
     for raw in paths:
@@ -498,13 +687,20 @@ def collect_targets(paths: Sequence[str]) -> List[Path]:
     return resolved
 
 
-def gather_findings(root: Path, include_node_modules: bool) -> Tuple[List[Finding], ScanStats]:
+def gather_findings(root: Path, include_node_modules: bool, check_hashes: bool = True) -> Tuple[List[Finding], ScanStats]:
     findings: List[Finding] = []
     stats = ScanStats()
     for current_dir, _dirnames, filenames in safe_walk(root, include_node_modules=include_node_modules):
         in_node_modules = "node_modules" in current_dir.parts
         for filename in filenames:
             file_path = current_dir / filename
+
+            # Check for IOC hashes in suspicious files
+            if check_hashes and any(pattern in filename.lower() for pattern in IOC_FILE_PATTERNS):
+                ioc_finding = scan_file_for_iocs(file_path)
+                if ioc_finding:
+                    findings.append(ioc_finding)
+
             if filename == "package.json":
                 if in_node_modules:
                     if include_node_modules:
@@ -521,18 +717,36 @@ def gather_findings(root: Path, include_node_modules: bool) -> Tuple[List[Findin
 
 def summarize(findings: List[Finding], root: Optional[Path]) -> None:
     if not findings:
-        LOGGER.info("No compromised packages detected.")
+        LOGGER.info("No compromised packages or IOCs detected.")
         return
-    LOGGER.warning("Detected compromised dependencies:")
-    for finding in findings:
-        source = finding.source
-        if root:
-            try:
-                source = str(Path(source).resolve().relative_to(root))
-            except Exception:  # noqa: BLE001 - best effort formatting
-                source = finding.source
-        LOGGER.warning("- %s@%s (%s) -> %s", finding.package, finding.version, source, finding.evidence)
-    LOGGER.warning("Total findings: %s", len(findings))
+
+    dependency_findings = [f for f in findings if f.category == "dependency"]
+    ioc_findings = [f for f in findings if f.category == "ioc"]
+
+    if dependency_findings:
+        LOGGER.warning("Detected compromised dependencies:")
+        for finding in dependency_findings:
+            source = finding.source
+            if root:
+                try:
+                    source = str(Path(source).resolve().relative_to(root))
+                except Exception:  # noqa: BLE001 - best effort formatting
+                    source = finding.source
+            LOGGER.warning("- %s@%s (%s) -> %s", finding.package, finding.version, source, finding.evidence)
+
+    if ioc_findings:
+        LOGGER.warning("Detected IOC hash matches (known malicious files):")
+        for finding in ioc_findings:
+            source = finding.source
+            if root:
+                try:
+                    source = str(Path(source).resolve().relative_to(root))
+                except Exception:  # noqa: BLE001 - best effort formatting
+                    source = finding.source
+            LOGGER.warning("- %s (%s) -> %s", finding.version, source, finding.evidence)
+
+    LOGGER.warning("Total findings: %s (Dependencies: %s, IOCs: %s)",
+                   len(findings), len(dependency_findings), len(ioc_findings))
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -555,8 +769,29 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Inspect globally installed npm packages via 'npm ls -g'.",
     )
     parser.add_argument(
+        "--skip-cache",
+        action="store_true",
+        help="Skip inspecting the npm cache index (~/.npm/_cacache/index-v5).",
+    )
+    parser.add_argument(
+        "--npm-cache-dir",
+        help="Override the npm cache directory (defaults to $NPM_CONFIG_CACHE or ~/.npm).",
+    )
+    parser.add_argument(
         "--advisory-file",
         help="Path to the compromised package advisory JSON. Overrides defaults and environment variable.",
+    )
+    parser.add_argument(
+        "--hash-iocs",
+        action="store_true",
+        default=True,
+        help="Enable hash-based IOC detection for known malicious files (default: enabled).",
+    )
+    parser.add_argument(
+        "--no-hash-iocs",
+        action="store_false",
+        dest="hash_iocs",
+        help="Disable hash-based IOC detection.",
     )
     parser.add_argument(
         "--log-dir",
@@ -610,7 +845,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     overall_stats = ScanStats()
     for target in targets:
         LOGGER.info("Scanning %s", target)
-        findings, stats = gather_findings(target, include_node_modules=args.include_node_modules)
+        findings, stats = gather_findings(target, include_node_modules=args.include_node_modules, check_hashes=args.hash_iocs)
         all_findings.extend(findings)
         overall_stats.merge(stats)
         LOGGER.info(
@@ -628,6 +863,22 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             "Global npm scan inspected %s packages and flagged %s findings.",
             inspected,
             len(global_findings),
+        )
+
+    cache_override = args.npm_cache_dir
+    check_cache = not args.skip_cache or bool(cache_override)
+    if args.skip_cache and cache_override:
+        LOGGER.info("Cache scan disabled (--skip-cache); ignoring --npm-cache-dir value %s.", cache_override)
+        check_cache = False
+    if check_cache:
+        cache_index_dir = resolve_cache_index_dir(cache_override)
+        LOGGER.info("Scanning npm cache index at %s", cache_index_dir)
+        cache_findings, inspected_cache = scan_npm_cache(cache_index_dir)
+        all_findings.extend(cache_findings)
+        LOGGER.info(
+            "Cache scan inspected %s cached artifacts and flagged %s findings.",
+            inspected_cache,
+            len(cache_findings),
         )
 
     LOGGER.info(

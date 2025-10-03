@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+- Inspect cached npm tarballs by default and expose `--skip-cache` /
+  `--npm-cache-dir` controls, surfacing compromised cache hits in JSON
+  output and logs (#9)
+- Add hash-based IOC detection for known malicious Shai-Hulud payload files,
+  scanning for SHA-256 hashes in bundle.js, index.js, and install scripts.
+  Enabled by default with `--no-hash-iocs` flag to disable (#8)
+
 ## v0.1.1 - 2025-09-17
 
 - Ensure the `config` package ships in the distribution and add a regression test

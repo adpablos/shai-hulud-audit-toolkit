@@ -42,6 +42,24 @@ shai-hulud-audit --skip-node-modules --skip-global /srv/app /tmp/build
 Scans only the specified paths, ignoring `node_modules` subtrees and the global
 npm install tree.
 
+### Skip cached npm tarballs
+```bash
+shai-hulud-audit --skip-cache
+```
+Cache inspection runs by default. Use this flag if the cache directory is
+unavailable or expensive to mount. Override the cache root when needed with
+`--npm-cache-dir /custom/cache` (useful on CI or when scanning a mounted home
+directory snapshot).
+
+### Disable hash-based IOC detection
+```bash
+shai-hulud-audit --no-hash-iocs
+```
+Hash-based IOC (Indicator of Compromise) detection runs by default, scanning
+files like `bundle.js`, `index.js`, and install scripts for known malicious
+Shai-Hulud payload SHA-256 hashes. Use this flag to disable hash checking if
+it causes performance issues or false positives.
+
 ## Configuration & Parser Hints
 
 Advisory sources are defined in `config/shai_hulud_sources.json`:
@@ -67,6 +85,12 @@ Advisory sources are defined in `config/shai_hulud_sources.json`:
   `resolve` package tests). Any new warnings indicate real issues.
 - Use `--json` to capture findings in machine-readable form for follow-up
   automation.
+- Cache inspection runs by default. Combine `--skip-cache` with `--npm-cache-dir`
+  to point at a temporary cache snapshot without touching the live cache when
+  needed.
+- Hash-based IOC detection runs by default, checking files for known malicious
+  Shai-Hulud payload hashes. Files larger than 10MB are skipped for performance.
+  Use `--no-hash-iocs` to disable if needed.
 
 ## Interpreting Scan Output
 
@@ -97,8 +121,16 @@ INFO: Aggregate summary: 1 manifests scanned (0 within node_modules); lockfiles:
 WARNING: Detected compromised dependencies:
 WARNING: - example@1.0.0 (package-lock.json) -> packages entry: node_modules/example
 WARNING: - example@1.0.0 (package.json) -> dependencies -> example = 1.0.0
-WARNING: Total findings: 2
+WARNING: Total findings: 2 (Dependencies: 2, IOCs: 0)
 WARNING: Findings recorded in /tmp/.../logs/shai_hulud_scan_YYYYMMDD_HHMMSS.log
+```
+
+If IOC hash matches are found, they will be reported separately:
+
+```
+WARNING: Detected IOC hash matches (known malicious files):
+WARNING: - bundle.js (node_modules/@ctrl/tinycolor/bundle.js) -> SHA-256: de0e25a3e6c1e1e5998b306b7141b3dc4c0088da9d7bb47c1c00c91e6e4f85d6
+WARNING: Total findings: 3 (Dependencies: 2, IOCs: 1)
 ```
 
 The scanner elevates to `WARNING` level for each finding and terminates with
