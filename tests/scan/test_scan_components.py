@@ -1,3 +1,4 @@
+import hashlib
 import json
 from collections import Counter
 from pathlib import Path
@@ -143,3 +144,105 @@ def test_scan_npm_cache_deduplicates_entries(tmp_path: Path, monkeypatch) -> Non
     findings, inspected = scanner.scan_npm_cache(tmp_path / "index-v5")
     assert inspected == 2
     assert [(finding.package, finding.version) for finding in findings] == [("example", "1.0.0")]
+
+
+def test_compute_file_hash() -> None:
+    """Test SHA-256 hash computation."""
+    from tempfile import NamedTemporaryFile
+    with NamedTemporaryFile(delete=False) as tmp:
+        tmp.write(b"test content")
+        tmp_path = Path(tmp.name)
+
+    try:
+        file_hash = scanner.compute_file_hash(tmp_path)
+        expected_hash = hashlib.sha256(b"test content").hexdigest()
+        assert file_hash == expected_hash
+    finally:
+        tmp_path.unlink()
+
+
+def test_scan_file_for_iocs_positive_match(tmp_path: Path, monkeypatch) -> None:
+    """Test IOC detection with known malicious hash."""
+    # Create a file with known content
+    test_file = tmp_path / "bundle.js"
+    test_content = b"malicious content"
+    test_file.write_bytes(test_content)
+
+    # Calculate its hash
+    test_hash = hashlib.sha256(test_content).hexdigest()
+
+    # Add it to the malicious hashes set
+    monkeypatch.setattr(scanner, "MALICIOUS_HASHES", {test_hash})
+
+    finding = scanner.scan_file_for_iocs(test_file)
+    assert finding is not None
+    assert finding.category == "ioc"
+    assert finding.version == "bundle.js"
+    assert test_hash in finding.evidence
+
+
+def test_scan_file_for_iocs_negative_match(tmp_path: Path, monkeypatch) -> None:
+    """Test IOC detection with benign file."""
+    test_file = tmp_path / "bundle.js"
+    test_file.write_bytes(b"benign content")
+
+    # Set malicious hashes that don't match
+    monkeypatch.setattr(scanner, "MALICIOUS_HASHES", {"deadbeef" * 8})
+
+    finding = scanner.scan_file_for_iocs(test_file)
+    assert finding is None
+
+
+def test_gather_findings_with_hash_detection(tmp_path: Path, monkeypatch) -> None:
+    """Test that gather_findings detects IOCs when enabled."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    # Create a malicious file
+    malicious_file = workspace / "bundle.js"
+    malicious_content = b"malicious payload"
+    malicious_file.write_bytes(malicious_content)
+    malicious_hash = hashlib.sha256(malicious_content).hexdigest()
+
+    # Also create a package.json with compromised dependency
+    _write_json(
+        workspace / "package.json",
+        {"name": "test-app", "dependencies": {"evil-pkg": "1.0.0"}}
+    )
+
+    monkeypatch.setattr(scanner, "MALICIOUS_HASHES", {malicious_hash})
+    monkeypatch.setattr(scanner, "COMPROMISED_PACKAGES", {"evil-pkg": {"1.0.0"}})
+
+    findings, stats = scanner.gather_findings(workspace, include_node_modules=False, check_hashes=True)
+
+    # Should find both the dependency and the IOC
+    assert len(findings) == 2
+    dependency_findings = [f for f in findings if f.category == "dependency"]
+    ioc_findings = [f for f in findings if f.category == "ioc"]
+
+    assert len(dependency_findings) == 1
+    assert dependency_findings[0].package == "evil-pkg"
+
+    assert len(ioc_findings) == 1
+    assert ioc_findings[0].version == "bundle.js"
+    assert malicious_hash in ioc_findings[0].evidence
+
+
+def test_gather_findings_hash_detection_disabled(tmp_path: Path, monkeypatch) -> None:
+    """Test that hash detection can be disabled."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    # Create a malicious file
+    malicious_file = workspace / "bundle.js"
+    malicious_content = b"malicious payload"
+    malicious_file.write_bytes(malicious_content)
+    malicious_hash = hashlib.sha256(malicious_content).hexdigest()
+
+    monkeypatch.setattr(scanner, "MALICIOUS_HASHES", {malicious_hash})
+    monkeypatch.setattr(scanner, "COMPROMISED_PACKAGES", {})
+
+    findings, stats = scanner.gather_findings(workspace, include_node_modules=False, check_hashes=False)
+
+    # Should not find any IOCs when disabled
+    assert len(findings) == 0

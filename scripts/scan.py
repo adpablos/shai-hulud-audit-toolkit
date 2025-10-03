@@ -8,6 +8,7 @@ that matches the Shai-Hulud supply-chain compromise advisory.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -34,6 +35,28 @@ SUPPRESSED_WARNING_SUBSTRINGS = (
 SUPPRESSED_WARNING_SEEN: Set[str] = set()
 
 CACHE_SOURCE = "npm-cache"
+
+# Known malicious Shai-Hulud payload SHA-256 hashes
+MALICIOUS_HASHES: Set[str] = {
+    "de0e25a3e6c1e1e5998b306b7141b3dc4c0088da9d7bb47c1c00c91e6e4f85d6",
+    "81d2a004a1bca6ef87a1caf7d0e0b355ad1764238e40ff6d1b1cb77ad4f595c3",
+    "83a650ce44b2a9854802a7fb4c202877815274c129af49e6c2d1d5d5d55c501e",
+    "4b2399646573bb737c4969563303d8ee2e9ddbd1b271f1ca9e35ea78062538db",
+    "dc67467a39b70d1cd4c1f7f7a459b35058163592f4a9e8fb4dffcbba98ef210c",
+    "46faab8ab153fae6e80e7cca38eab363075bb524edd79e42269217a083628f09",
+    "b74caeaa75e077c99f7d44f46daaf9796a3be43ecf24f2a1fd381844669da777",
+}
+
+# File patterns to check for IOCs
+IOC_FILE_PATTERNS = [
+    "bundle.js",
+    "index.js",
+    "install.js",
+    "postinstall.js",
+]
+
+# Maximum file size to hash (10 MB)
+MAX_HASH_FILE_SIZE = 10 * 1024 * 1024
 
 
 @dataclass
@@ -170,6 +193,7 @@ class Finding:
     version: str
     source: str
     evidence: str
+    category: str = "dependency"  # "dependency" or "ioc"
 
     def to_dict(self) -> Dict[str, str]:
         return asdict(self)
@@ -620,6 +644,38 @@ def scan_npm_cache(index_dir: Path) -> Tuple[List[Finding], int]:
     return findings, inspected
 
 
+def compute_file_hash(file_path: Path) -> Optional[str]:
+    """Compute SHA-256 hash of a file."""
+    try:
+        # Check file size first
+        if file_path.stat().st_size > MAX_HASH_FILE_SIZE:
+            LOGGER.debug("File %s exceeds size limit for hashing", file_path)
+            return None
+
+        sha256_hash = hashlib.sha256()
+        with file_path.open("rb") as f:
+            for chunk in iter(lambda: f.read(8192), b""):
+                sha256_hash.update(chunk)
+        return sha256_hash.hexdigest()
+    except (OSError, InterruptedError) as exc:
+        LOGGER.debug("Unable to hash file %s: %s", file_path, exc)
+        return None
+
+
+def scan_file_for_iocs(file_path: Path) -> Optional[Finding]:
+    """Check if a file matches known malicious hashes."""
+    file_hash = compute_file_hash(file_path)
+    if file_hash and file_hash in MALICIOUS_HASHES:
+        return Finding(
+            package="IOC",
+            version=file_path.name,
+            source=str(file_path),
+            evidence=f"SHA-256: {file_hash}",
+            category="ioc",
+        )
+    return None
+
+
 def collect_targets(paths: Sequence[str]) -> List[Path]:
     resolved: List[Path] = []
     for raw in paths:
@@ -631,13 +687,20 @@ def collect_targets(paths: Sequence[str]) -> List[Path]:
     return resolved
 
 
-def gather_findings(root: Path, include_node_modules: bool) -> Tuple[List[Finding], ScanStats]:
+def gather_findings(root: Path, include_node_modules: bool, check_hashes: bool = True) -> Tuple[List[Finding], ScanStats]:
     findings: List[Finding] = []
     stats = ScanStats()
     for current_dir, _dirnames, filenames in safe_walk(root, include_node_modules=include_node_modules):
         in_node_modules = "node_modules" in current_dir.parts
         for filename in filenames:
             file_path = current_dir / filename
+
+            # Check for IOC hashes in suspicious files
+            if check_hashes and any(pattern in filename.lower() for pattern in IOC_FILE_PATTERNS):
+                ioc_finding = scan_file_for_iocs(file_path)
+                if ioc_finding:
+                    findings.append(ioc_finding)
+
             if filename == "package.json":
                 if in_node_modules:
                     if include_node_modules:
@@ -654,18 +717,36 @@ def gather_findings(root: Path, include_node_modules: bool) -> Tuple[List[Findin
 
 def summarize(findings: List[Finding], root: Optional[Path]) -> None:
     if not findings:
-        LOGGER.info("No compromised packages detected.")
+        LOGGER.info("No compromised packages or IOCs detected.")
         return
-    LOGGER.warning("Detected compromised dependencies:")
-    for finding in findings:
-        source = finding.source
-        if root:
-            try:
-                source = str(Path(source).resolve().relative_to(root))
-            except Exception:  # noqa: BLE001 - best effort formatting
-                source = finding.source
-        LOGGER.warning("- %s@%s (%s) -> %s", finding.package, finding.version, source, finding.evidence)
-    LOGGER.warning("Total findings: %s", len(findings))
+
+    dependency_findings = [f for f in findings if f.category == "dependency"]
+    ioc_findings = [f for f in findings if f.category == "ioc"]
+
+    if dependency_findings:
+        LOGGER.warning("Detected compromised dependencies:")
+        for finding in dependency_findings:
+            source = finding.source
+            if root:
+                try:
+                    source = str(Path(source).resolve().relative_to(root))
+                except Exception:  # noqa: BLE001 - best effort formatting
+                    source = finding.source
+            LOGGER.warning("- %s@%s (%s) -> %s", finding.package, finding.version, source, finding.evidence)
+
+    if ioc_findings:
+        LOGGER.warning("Detected IOC hash matches (known malicious files):")
+        for finding in ioc_findings:
+            source = finding.source
+            if root:
+                try:
+                    source = str(Path(source).resolve().relative_to(root))
+                except Exception:  # noqa: BLE001 - best effort formatting
+                    source = finding.source
+            LOGGER.warning("- %s (%s) -> %s", finding.version, source, finding.evidence)
+
+    LOGGER.warning("Total findings: %s (Dependencies: %s, IOCs: %s)",
+                   len(findings), len(dependency_findings), len(ioc_findings))
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -699,6 +780,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument(
         "--advisory-file",
         help="Path to the compromised package advisory JSON. Overrides defaults and environment variable.",
+    )
+    parser.add_argument(
+        "--hash-iocs",
+        action="store_true",
+        default=True,
+        help="Enable hash-based IOC detection for known malicious files (default: enabled).",
+    )
+    parser.add_argument(
+        "--no-hash-iocs",
+        action="store_false",
+        dest="hash_iocs",
+        help="Disable hash-based IOC detection.",
     )
     parser.add_argument(
         "--log-dir",
@@ -752,7 +845,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     overall_stats = ScanStats()
     for target in targets:
         LOGGER.info("Scanning %s", target)
-        findings, stats = gather_findings(target, include_node_modules=args.include_node_modules)
+        findings, stats = gather_findings(target, include_node_modules=args.include_node_modules, check_hashes=args.hash_iocs)
         all_findings.extend(findings)
         overall_stats.merge(stats)
         LOGGER.info(
