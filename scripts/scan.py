@@ -146,6 +146,61 @@ WORKFLOW_IOC_PATTERNS = [
     ".github/workflows/shai-hulud",
 ]
 
+# Suspicious code patterns for extended detection
+SUSPICIOUS_CODE_PATTERNS = {
+    "eval_usage": {
+        "patterns": [r"\beval\s*\(", r"Function\s*\(.*\)\s*\("],
+        "description": "Dynamic code evaluation",
+        "severity": "high",
+    },
+    "child_process": {
+        "patterns": [r"child_process\.exec", r"child_process\.spawn", r'require\(["\']child_process["\']'],
+        "description": "Process execution capabilities",
+        "severity": "medium",
+    },
+    "network_calls": {
+        "patterns": [r"https?://[^\s\"\')]+", r"fetch\(", r"axios\.(get|post)", r"request\("],
+        "description": "Network communication",
+        "severity": "low",
+    },
+    "credential_access": {
+        "patterns": [
+            r"process\.env\[.*(?:SECRET|KEY|TOKEN|PASSWORD|API)",
+            r'\.env["\']?\s*\)',
+            r"AWS_.*(?:KEY|SECRET)",
+            r"GITHUB_TOKEN",
+        ],
+        "description": "Environment credential access",
+        "severity": "high",
+    },
+    "obfuscation": {
+        "patterns": [
+            r"String\.fromCharCode",
+            r"atob\(",
+            r'Buffer\.from\(.*["\']base64',
+            r"\\x[0-9a-fA-F]{2}",
+        ],
+        "description": "Code obfuscation techniques",
+        "severity": "medium",
+    },
+    "file_system": {
+        "patterns": [r"fs\.readFileSync", r"fs\.writeFileSync", r'require\(["\']fs["\']'],
+        "description": "File system access",
+        "severity": "low",
+    },
+    "command_injection": {
+        "patterns": [r"\$\{.*\}", r"`.*\$\{.*\}.*`", r"shell:\s*true"],
+        "description": "Potential command injection",
+        "severity": "high",
+    },
+}
+
+# JavaScript file extensions to scan for patterns
+JS_FILE_EXTENSIONS = {".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx"}
+
+# Maximum file size for pattern scanning (1 MB)
+MAX_PATTERN_SCAN_SIZE = 1 * 1024 * 1024
+
 
 @dataclass
 class ScanStats:
@@ -817,6 +872,86 @@ def scan_file_for_iocs(file_path: Path) -> Optional[Finding]:
     return None
 
 
+def is_minified(content: str) -> bool:
+    """Detect if file content is minified using line length heuristic."""
+    lines = content.split("\n")
+    if not lines:
+        return False
+    # If average line length > 200 chars, likely minified
+    total_len = sum(len(line) for line in lines[:50])  # Check first 50 lines
+    avg_len = total_len / min(len(lines), 50)
+    return avg_len > 200
+
+
+def scan_file_for_patterns(
+    file_path: Path,
+    categories: Optional[Set[str]] = None,
+    min_severity: str = "low",
+) -> List[Finding]:
+    """Scan JavaScript file content for suspicious code patterns."""
+    findings: List[Finding] = []
+
+    # Check file size
+    try:
+        file_size = file_path.stat().st_size
+        if file_size > MAX_PATTERN_SCAN_SIZE:
+            LOGGER.debug("Skipping pattern scan for %s (size: %d bytes)", file_path, file_size)
+            return findings
+    except (OSError, InterruptedError) as exc:  # noqa: PERF203
+        LOGGER.debug("Unable to stat file %s: %s", file_path, exc)
+        return findings
+
+    # Read file content
+    try:
+        content = file_path.read_text(encoding="utf-8", errors="ignore")
+    except (OSError, InterruptedError) as exc:  # noqa: PERF203
+        LOGGER.debug("Unable to read file %s: %s", file_path, exc)
+        return findings
+
+    # Skip minified files
+    if is_minified(content):
+        LOGGER.debug("Skipping pattern scan for minified file: %s", file_path)
+        return findings
+
+    # Define severity order
+    severity_order = {"low": 0, "medium": 1, "high": 2, "critical": 3}
+    min_sev_level = severity_order.get(min_severity, 0)
+
+    # Scan for patterns
+    detected_categories: Set[str] = set()
+    for category, pattern_info in SUSPICIOUS_CODE_PATTERNS.items():
+        # Filter by category if specified
+        if categories and category not in categories:
+            continue
+
+        # Filter by severity
+        pattern_severity = pattern_info["severity"]
+        if severity_order.get(pattern_severity, 0) < min_sev_level:
+            continue
+
+        # Skip if we've already detected this category
+        if category in detected_categories:
+            continue
+
+        # Check patterns
+        for pattern in pattern_info["patterns"]:
+            if re.search(pattern, content, re.IGNORECASE):
+                findings.append(
+                    Finding(
+                        package=category,
+                        version=file_path.name,
+                        source=str(file_path),
+                        evidence=f"{pattern_info['description']} - pattern: {pattern}",
+                        category="suspicious_pattern",
+                        severity=pattern_severity,
+                    )
+                )
+                detected_categories.add(category)
+                break  # Only report once per category per file
+
+    return findings
+
+
 def collect_targets(paths: Sequence[str]) -> List[Path]:
     resolved: List[Path] = []
     for raw in paths:
@@ -853,7 +988,13 @@ def detect_workflow_iocs(root: Path) -> List[Finding]:
 
 
 def gather_findings(
-    root: Path, include_node_modules: bool, check_hashes: bool = True, detect_iocs: bool = True
+    root: Path,
+    include_node_modules: bool,
+    check_hashes: bool = True,
+    detect_iocs: bool = True,
+    detect_patterns: bool = False,
+    pattern_categories: Optional[Set[str]] = None,
+    pattern_min_severity: str = "low",
 ) -> Tuple[List[Finding], ScanStats]:
     findings: List[Finding] = []
     stats = ScanStats()
@@ -872,6 +1013,11 @@ def gather_findings(
                 ioc_finding = scan_file_for_iocs(file_path)
                 if ioc_finding:
                     findings.append(ioc_finding)
+
+            # Check for suspicious code patterns in JavaScript files
+            if detect_patterns and file_path.suffix in JS_FILE_EXTENSIONS:
+                pattern_findings = scan_file_for_patterns(file_path, pattern_categories, pattern_min_severity)
+                findings.extend(pattern_findings)
 
             if filename == "package.json":
                 if in_node_modules:
@@ -937,6 +1083,7 @@ def print_structured_report(
     hash_ioc_findings = [f for f in findings if f.category == "ioc"]
     script_ioc_findings = [f for f in findings if f.category == "script_ioc"]
     workflow_ioc_findings = [f for f in findings if f.category == "workflow_ioc"]
+    pattern_findings = [f for f in findings if f.category == "suspicious_pattern"]
     all_iocs = hash_ioc_findings + script_ioc_findings + workflow_ioc_findings
 
     print(f"\n{Emojis.get(Emojis.SEARCH)} FINDINGS")
@@ -954,6 +1101,9 @@ def print_structured_report(
         if all_iocs:
             ioc_line += f" ({len(hash_ioc_findings)} hash, {len(script_ioc_findings)} script, {len(workflow_ioc_findings)} workflow)"
         print(Colors.colorize(ioc_line, Colors.RED if all_iocs else ""))
+        if pattern_findings:
+            pattern_line = f"      • Suspicious Patterns: {len(pattern_findings)}"
+            print(Colors.colorize(pattern_line, Colors.YELLOW))
 
     # Section 4: Detailed Findings
     if findings:
@@ -1021,6 +1171,23 @@ def print_structured_report(
                         source = finding.source
                 workflow_name = Colors.colorize(finding.version, Colors.YELLOW)
                 print(f"   ⚙️  {workflow_name}")
+                print(f"      Location: {source}")
+                print(f"      Evidence: {finding.evidence}")
+
+        if pattern_findings:
+            if dependency_findings or hash_ioc_findings or script_ioc_findings or workflow_ioc_findings:
+                print()
+            print(Colors.colorize("   Suspicious Code Patterns:", Colors.YELLOW + Colors.BOLD))
+            for finding in pattern_findings:
+                source = finding.source
+                if root:
+                    try:
+                        source = str(Path(source).resolve().relative_to(root))
+                    except Exception:  # noqa: BLE001 - best effort formatting
+                        source = finding.source
+                category_name = Colors.colorize(finding.package, Colors.YELLOW)
+                print(f"   🔎 {category_name} ({finding.severity})")
+                print(f"      File: {finding.version}")
                 print(f"      Location: {source}")
                 print(f"      Evidence: {finding.evidence}")
 
@@ -1105,9 +1272,23 @@ def print_compact_report(findings: List[Finding], root: Optional[Path]) -> None:
             workflow_name = Colors.colorize(finding.version, Colors.YELLOW)
             LOGGER.warning("⚙️  %s (%s) -> %s", workflow_name, source, finding.evidence)
 
+    pattern_findings = [f for f in findings if f.category == "suspicious_pattern"]
+    if pattern_findings:
+        header = Colors.colorize("🔎 Detected suspicious code patterns:", Colors.YELLOW + Colors.BOLD)
+        LOGGER.warning(header)
+        for finding in pattern_findings:
+            source = finding.source
+            if root:
+                try:
+                    source = str(Path(source).resolve().relative_to(root))
+                except Exception:  # noqa: BLE001 - best effort formatting
+                    source = finding.source
+            category = Colors.colorize(finding.package, Colors.YELLOW)
+            LOGGER.warning("🔎 %s [%s] (%s) -> %s", category, finding.severity, source, finding.evidence)
+
     risk_emoji = determine_risk_level(findings)
     total_msg = Colors.colorize(
-        f"{risk_emoji} Total findings: {len(findings)} (Dependencies: {len(dependency_findings)}, IOCs: {len(all_iocs)})",
+        f"{risk_emoji} Total findings: {len(findings)} (Dependencies: {len(dependency_findings)}, IOCs: {len(all_iocs)}, Patterns: {len(pattern_findings)})",
         Colors.RED + Colors.BOLD
     )
     LOGGER.warning(total_msg)
@@ -1175,6 +1356,28 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Disable script and workflow IOC detection.",
     )
     parser.add_argument(
+        "--detect-patterns",
+        action="store_true",
+        default=False,
+        help="Enable suspicious code pattern detection in JavaScript files (default: disabled).",
+    )
+    parser.add_argument(
+        "--no-detect-patterns",
+        action="store_false",
+        dest="detect_patterns",
+        help="Disable suspicious code pattern detection.",
+    )
+    parser.add_argument(
+        "--pattern-severity",
+        choices=["low", "medium", "high", "critical"],
+        default="low",
+        help="Minimum severity level for pattern detection (default: low).",
+    )
+    parser.add_argument(
+        "--pattern-categories",
+        help="Comma-separated list of pattern categories to detect (e.g., eval_usage,child_process).",
+    )
+    parser.add_argument(
         "--log-dir",
         default="logs",
         help="Directory where timestamped scan logs are written (default: logs).",
@@ -1238,12 +1441,23 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         LOGGER.error("No valid targets to scan.")
         return 2
 
+    # Parse pattern categories if provided
+    pattern_categories = None
+    if args.pattern_categories:
+        pattern_categories = set(cat.strip() for cat in args.pattern_categories.split(","))
+
     all_findings: List[Finding] = []
     overall_stats = ScanStats()
     for target in targets:
         LOGGER.info("Scanning %s", target)
         findings, stats = gather_findings(
-            target, include_node_modules=args.include_node_modules, check_hashes=args.hash_iocs, detect_iocs=args.detect_iocs
+            target,
+            include_node_modules=args.include_node_modules,
+            check_hashes=args.hash_iocs,
+            detect_iocs=args.detect_iocs,
+            detect_patterns=args.detect_patterns,
+            pattern_categories=pattern_categories,
+            pattern_min_severity=args.pattern_severity,
         )
         all_findings.extend(findings)
         overall_stats.merge(stats)

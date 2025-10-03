@@ -15,6 +15,11 @@
   lifecycle hooks, GitHub workflows with malicious patterns) with `--detect-iocs`
   and `--no-detect-iocs` flags. Adds `severity` field to Finding dataclass for
   enhanced triage capabilities (#6)
+- Add extended suspicious code pattern detection for JavaScript files including
+  eval usage, child process execution, network calls, credential access, code
+  obfuscation, file system access, and command injection patterns. Controlled via
+  `--detect-patterns`, `--pattern-severity`, and `--pattern-categories` flags.
+  Includes minified file detection and configurable severity filtering (#13)
 
 ## v0.2.0 - 2025-10-03
 
