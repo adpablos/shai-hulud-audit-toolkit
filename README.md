@@ -22,6 +22,8 @@ and audit their local environments for any compromised package versions.
   compromised `package@version` plus the confirming source URLs.
 - **IOC hash detection** – scans for known malicious Shai-Hulud payload hashes
   (SHA-256) in suspicious files like `bundle.js`, `index.js`, and install scripts.
+- **Structured summary reports** – multi-section layout with scan scope, coverage stats,
+  findings summary, detailed findings, and recommendations (auto-detects TTY for format).
 - **Color-coded output** – ANSI color support with automatic terminal detection for
   improved readability (disable with `--no-color` or `NO_COLOR` environment variable).
 - **Emoji risk indicators** – visual severity markers (🚨 critical, ⚠️ warning, ✅ clean)
@@ -72,10 +74,11 @@ Useful modifiers (see [docs/USAGE.md](docs/USAGE.md) for more examples):
 - `--no-hash-iocs` – disable hash-based IOC detection (enabled by default)
 - `--no-color` – disable color output (also respects `NO_COLOR` environment variable)
 - `--no-emoji` – disable emoji indicators (auto-disabled for non-TTY terminals)
+- `--format [structured|compact|json]` – output format: `structured` (multi-section report, default for TTY), `compact` (legacy format, default for pipes), or `json`
 - `--skip-scan` – fetch advisories but do not run the scanner
 - `--skip-fetch --advisory path/to/file.json` – reuse a previously generated
   advisory instead of fetching
-- `--json` – emit findings to stdout as JSON (in addition to logging)
+- `--json` – emit findings to stdout as JSON (alias for `--format json`)
 - `paths…` – override the default scan target (`$HOME`)
 
 Log files land in:
