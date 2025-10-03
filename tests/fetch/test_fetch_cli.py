@@ -26,7 +26,7 @@ def test_fetch_sources_writes_consolidated_payload(monkeypatch, tmp_path):
     output_path = tmp_path / "data" / "advisory.json"
     log_dir = tmp_path / "logs"
 
-    def fake_setup_logging(target_log_dir: Path, level: str) -> Path:
+    def fake_setup_logging(target_log_dir: Path, level: str, use_color: bool = True) -> Path:
         target_log_dir.mkdir(parents=True, exist_ok=True)
         log_file = target_log_dir / "fetch.log"
         log_file.write_text("stub log", encoding="utf-8")
@@ -112,7 +112,7 @@ def test_fetch_sources_handles_failures(monkeypatch, tmp_path):
     output_path = tmp_path / "out.json"
     log_dir = tmp_path / "logs"
 
-    def fake_setup_logging(target_log_dir: Path, level: str) -> Path:
+    def fake_setup_logging(target_log_dir: Path, level: str, use_color: bool = True) -> Path:
         target_log_dir.mkdir(parents=True, exist_ok=True)
         log_file = target_log_dir / "fetch.log"
         log_file.write_text("stub log", encoding="utf-8")
