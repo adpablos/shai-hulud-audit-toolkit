@@ -11,6 +11,10 @@
 - Add structured summary report with multi-section layout (scan scope, coverage,
   findings, detailed findings, recommendations) via `--format` flag supporting
   `structured`, `compact`, and `json` output formats with TTY auto-detection (#12)
+- Add script and workflow IOC detection for known Shai-Hulud indicators (suspicious
+  lifecycle hooks, GitHub workflows with malicious patterns) with `--detect-iocs`
+  and `--no-detect-iocs` flags. Adds `severity` field to Finding dataclass for
+  enhanced triage capabilities (#6)
 
 ## v0.2.0 - 2025-10-03
 

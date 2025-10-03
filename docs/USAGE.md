@@ -60,6 +60,16 @@ files like `bundle.js`, `index.js`, and install scripts for known malicious
 Shai-Hulud payload SHA-256 hashes. Use this flag to disable hash checking if
 it causes performance issues or false positives.
 
+### Disable script and workflow IOC detection
+```bash
+shai-hulud-audit --no-detect-iocs
+```
+Script and workflow IOC detection runs by default, identifying:
+- **Script IOCs**: Suspicious patterns in package.json lifecycle hooks (curl, wget, webhook.site, known Shai-Hulud UUIDs)
+- **Workflow IOCs**: Malicious GitHub Actions workflow files (shai-hulud-workflow.yml, shai-hulud.yml)
+
+Use this flag to disable these detections if they cause false positives in your environment.
+
 ### Disable color output
 ```bash
 shai-hulud-audit --no-color

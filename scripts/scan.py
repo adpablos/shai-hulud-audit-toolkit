@@ -129,6 +129,23 @@ IOC_FILE_PATTERNS = [
 # Maximum file size to hash (10 MB)
 MAX_HASH_FILE_SIZE = 10 * 1024 * 1024
 
+# Known Shai-Hulud script IOC patterns
+SCRIPT_IOC_PATTERNS = [
+    r"\bcurl\b.*https?://",
+    r"\bwget\b.*https?://",
+    r"\bfetch\(",
+    r"webhook\.site",
+    r"bb8ca5f6-4175-45d2-b042-fc9ebb8170b7",  # Known Shai-Hulud UUID
+    r"trufflehog",
+]
+
+# Known Shai-Hulud workflow names
+WORKFLOW_IOC_PATTERNS = [
+    "shai-hulud-workflow.yml",
+    "shai-hulud.yml",
+    ".github/workflows/shai-hulud",
+]
+
 
 @dataclass
 class ScanStats:
@@ -291,7 +308,8 @@ class Finding:
     version: str
     source: str
     evidence: str
-    category: str = "dependency"  # "dependency" or "ioc"
+    category: str = "dependency"  # "dependency", "ioc", "script_ioc", or "workflow_ioc"
+    severity: str = "medium"  # "low", "medium", "high", or "critical"
 
     def to_dict(self) -> Dict[str, str]:
         return asdict(self)
@@ -415,7 +433,27 @@ def iter_dependency_specs(block: object) -> Iterator[Tuple[str, str]]:
             yield from iter_dependency_specs(item)
 
 
-def scan_package_json(path: Path) -> List[Finding]:
+def detect_script_iocs(scripts: Dict[str, str], package_json_path: Path) -> List[Finding]:
+    """Detect suspicious IOC patterns in package.json scripts."""
+    findings: List[Finding] = []
+    for script_name, script_content in scripts.items():
+        for pattern in SCRIPT_IOC_PATTERNS:
+            if re.search(pattern, script_content, re.IGNORECASE):
+                findings.append(
+                    Finding(
+                        package="script_ioc",
+                        version=script_name,
+                        source=str(package_json_path),
+                        evidence=f"Suspicious pattern in script '{script_name}': {script_content[:100]}",
+                        category="script_ioc",
+                        severity="high",
+                    )
+                )
+                break  # Only report once per script
+    return findings
+
+
+def scan_package_json(path: Path, detect_iocs: bool = True) -> List[Finding]:
     data = load_json(path)
     if data is None:
         return []
@@ -444,6 +482,11 @@ def scan_package_json(path: Path) -> List[Finding]:
                         evidence=f"{section} -> {pkg} = {spec}",
                     )
                 )
+
+    # Check for script IOCs if enabled
+    if detect_iocs and "scripts" in data and isinstance(data["scripts"], dict):
+        findings.extend(detect_script_iocs(data["scripts"], path))
+
     return findings
 
 
@@ -785,9 +828,40 @@ def collect_targets(paths: Sequence[str]) -> List[Path]:
     return resolved
 
 
-def gather_findings(root: Path, include_node_modules: bool, check_hashes: bool = True) -> Tuple[List[Finding], ScanStats]:
+def detect_workflow_iocs(root: Path) -> List[Finding]:
+    """Detect suspicious workflow files in .github/workflows directory."""
+    findings: List[Finding] = []
+    workflows_dir = root / ".github" / "workflows"
+    if not workflows_dir.exists():
+        return findings
+
+    for workflow_file in workflows_dir.glob("*.yml"):
+        for pattern in WORKFLOW_IOC_PATTERNS:
+            if pattern in str(workflow_file):
+                findings.append(
+                    Finding(
+                        package="workflow_ioc",
+                        version=workflow_file.name,
+                        source=str(workflow_file),
+                        evidence=f"Suspicious workflow name matches known Shai-Hulud pattern: {pattern}",
+                        category="workflow_ioc",
+                        severity="high",
+                    )
+                )
+                break  # Only report once per workflow
+    return findings
+
+
+def gather_findings(
+    root: Path, include_node_modules: bool, check_hashes: bool = True, detect_iocs: bool = True
+) -> Tuple[List[Finding], ScanStats]:
     findings: List[Finding] = []
     stats = ScanStats()
+
+    # Check for workflow IOCs at the root level
+    if detect_iocs:
+        findings.extend(detect_workflow_iocs(root))
+
     for current_dir, _dirnames, filenames in safe_walk(root, include_node_modules=include_node_modules):
         in_node_modules = "node_modules" in current_dir.parts
         for filename in filenames:
@@ -806,7 +880,7 @@ def gather_findings(root: Path, include_node_modules: bool, check_hashes: bool =
                         findings.extend(scan_installed_package(file_path))
                 else:
                     stats.manifests += 1
-                    findings.extend(scan_package_json(file_path))
+                    findings.extend(scan_package_json(file_path, detect_iocs=detect_iocs))
             elif filename in LOCKFILE_HANDLERS and not in_node_modules:
                 stats.lockfiles[filename] += 1
                 findings.extend(LOCKFILE_HANDLERS[filename](file_path))
@@ -860,7 +934,10 @@ def print_structured_report(
 
     # Section 3: Findings Summary
     dependency_findings = [f for f in findings if f.category == "dependency"]
-    ioc_findings = [f for f in findings if f.category == "ioc"]
+    hash_ioc_findings = [f for f in findings if f.category == "ioc"]
+    script_ioc_findings = [f for f in findings if f.category == "script_ioc"]
+    workflow_ioc_findings = [f for f in findings if f.category == "workflow_ioc"]
+    all_iocs = hash_ioc_findings + script_ioc_findings + workflow_ioc_findings
 
     print(f"\n{Emojis.get(Emojis.SEARCH)} FINDINGS")
     print(subseparator)
@@ -873,8 +950,10 @@ def print_structured_report(
         print(Colors.colorize(total_line, Colors.RED + Colors.BOLD))
         dep_line = f"      • Dependencies:      {len(dependency_findings)}"
         print(Colors.colorize(dep_line, Colors.YELLOW if dependency_findings else ""))
-        ioc_line = f"      • IOC Matches:       {len(ioc_findings)}"
-        print(Colors.colorize(ioc_line, Colors.RED if ioc_findings else ""))
+        ioc_line = f"      • IOC Matches:       {len(all_iocs)}"
+        if all_iocs:
+            ioc_line += f" ({len(hash_ioc_findings)} hash, {len(script_ioc_findings)} script, {len(workflow_ioc_findings)} workflow)"
+        print(Colors.colorize(ioc_line, Colors.RED if all_iocs else ""))
 
     # Section 4: Detailed Findings
     if findings:
@@ -896,11 +975,11 @@ def print_structured_report(
                 print(f"      Location: {source}")
                 print(f"      Evidence: {finding.evidence}")
 
-        if ioc_findings:
+        if hash_ioc_findings:
             if dependency_findings:
                 print()
             print(Colors.colorize("   IOC Hash Matches (Known Malicious Files):", Colors.RED + Colors.BOLD))
-            for finding in ioc_findings:
+            for finding in hash_ioc_findings:
                 source = finding.source
                 if root:
                     try:
@@ -910,6 +989,38 @@ def print_structured_report(
                 filename = Colors.colorize(finding.version, Colors.YELLOW)
                 file_emoji = Emojis.get(Emojis.FILE)
                 print(f"   {file_emoji} {filename}")
+                print(f"      Location: {source}")
+                print(f"      Evidence: {finding.evidence}")
+
+        if script_ioc_findings:
+            if dependency_findings or hash_ioc_findings:
+                print()
+            print(Colors.colorize("   Script IOCs (Suspicious Package Scripts):", Colors.RED + Colors.BOLD))
+            for finding in script_ioc_findings:
+                source = finding.source
+                if root:
+                    try:
+                        source = str(Path(source).resolve().relative_to(root))
+                    except Exception:  # noqa: BLE001 - best effort formatting
+                        source = finding.source
+                script_name = Colors.colorize(finding.version, Colors.YELLOW)
+                print(f"   📝 {script_name}")
+                print(f"      Location: {source}")
+                print(f"      Evidence: {finding.evidence}")
+
+        if workflow_ioc_findings:
+            if dependency_findings or hash_ioc_findings or script_ioc_findings:
+                print()
+            print(Colors.colorize("   Workflow IOCs (Suspicious GitHub Workflows):", Colors.RED + Colors.BOLD))
+            for finding in workflow_ioc_findings:
+                source = finding.source
+                if root:
+                    try:
+                        source = str(Path(source).resolve().relative_to(root))
+                    except Exception:  # noqa: BLE001 - best effort formatting
+                        source = finding.source
+                workflow_name = Colors.colorize(finding.version, Colors.YELLOW)
+                print(f"   ⚙️  {workflow_name}")
                 print(f"      Location: {source}")
                 print(f"      Evidence: {finding.evidence}")
 
@@ -933,7 +1044,10 @@ def print_compact_report(findings: List[Finding], root: Optional[Path]) -> None:
         return
 
     dependency_findings = [f for f in findings if f.category == "dependency"]
-    ioc_findings = [f for f in findings if f.category == "ioc"]
+    hash_ioc_findings = [f for f in findings if f.category == "ioc"]
+    script_ioc_findings = [f for f in findings if f.category == "script_ioc"]
+    workflow_ioc_findings = [f for f in findings if f.category == "workflow_ioc"]
+    all_iocs = hash_ioc_findings + script_ioc_findings + workflow_ioc_findings
 
     if dependency_findings:
         emoji = Emojis.get(Emojis.CRITICAL if len(dependency_findings) >= 10 else Emojis.WARNING)
@@ -950,11 +1064,11 @@ def print_compact_report(findings: List[Finding], root: Optional[Path]) -> None:
             pkg_emoji = Emojis.get(Emojis.PACKAGE)
             LOGGER.warning("%s %s (%s) -> %s", pkg_emoji, pkg_version, source, finding.evidence)
 
-    if ioc_findings:
+    if hash_ioc_findings:
         emoji = Emojis.get(Emojis.IOC)
         header = Colors.colorize(f"{emoji} Detected IOC hash matches (known malicious files):", Colors.RED + Colors.BOLD)
         LOGGER.warning(header)
-        for finding in ioc_findings:
+        for finding in hash_ioc_findings:
             source = finding.source
             if root:
                 try:
@@ -965,9 +1079,35 @@ def print_compact_report(findings: List[Finding], root: Optional[Path]) -> None:
             file_emoji = Emojis.get(Emojis.FILE)
             LOGGER.warning("%s %s (%s) -> %s", file_emoji, filename, source, finding.evidence)
 
+    if script_ioc_findings:
+        header = Colors.colorize("📝 Detected script IOCs (suspicious package scripts):", Colors.RED + Colors.BOLD)
+        LOGGER.warning(header)
+        for finding in script_ioc_findings:
+            source = finding.source
+            if root:
+                try:
+                    source = str(Path(source).resolve().relative_to(root))
+                except Exception:  # noqa: BLE001 - best effort formatting
+                    source = finding.source
+            script_name = Colors.colorize(finding.version, Colors.YELLOW)
+            LOGGER.warning("📝 %s (%s) -> %s", script_name, source, finding.evidence)
+
+    if workflow_ioc_findings:
+        header = Colors.colorize("⚙️  Detected workflow IOCs (suspicious GitHub workflows):", Colors.RED + Colors.BOLD)
+        LOGGER.warning(header)
+        for finding in workflow_ioc_findings:
+            source = finding.source
+            if root:
+                try:
+                    source = str(Path(source).resolve().relative_to(root))
+                except Exception:  # noqa: BLE001 - best effort formatting
+                    source = finding.source
+            workflow_name = Colors.colorize(finding.version, Colors.YELLOW)
+            LOGGER.warning("⚙️  %s (%s) -> %s", workflow_name, source, finding.evidence)
+
     risk_emoji = determine_risk_level(findings)
     total_msg = Colors.colorize(
-        f"{risk_emoji} Total findings: {len(findings)} (Dependencies: {len(dependency_findings)}, IOCs: {len(ioc_findings)})",
+        f"{risk_emoji} Total findings: {len(findings)} (Dependencies: {len(dependency_findings)}, IOCs: {len(all_iocs)})",
         Colors.RED + Colors.BOLD
     )
     LOGGER.warning(total_msg)
@@ -1021,6 +1161,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         action="store_false",
         dest="hash_iocs",
         help="Disable hash-based IOC detection.",
+    )
+    parser.add_argument(
+        "--detect-iocs",
+        action="store_true",
+        default=True,
+        help="Enable script and workflow IOC detection (default: enabled).",
+    )
+    parser.add_argument(
+        "--no-detect-iocs",
+        action="store_false",
+        dest="detect_iocs",
+        help="Disable script and workflow IOC detection.",
     )
     parser.add_argument(
         "--log-dir",
@@ -1090,7 +1242,9 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     overall_stats = ScanStats()
     for target in targets:
         LOGGER.info("Scanning %s", target)
-        findings, stats = gather_findings(target, include_node_modules=args.include_node_modules, check_hashes=args.hash_iocs)
+        findings, stats = gather_findings(
+            target, include_node_modules=args.include_node_modules, check_hashes=args.hash_iocs, detect_iocs=args.detect_iocs
+        )
         all_findings.extend(findings)
         overall_stats.merge(stats)
         LOGGER.info(
