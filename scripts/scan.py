@@ -42,6 +42,7 @@ __all__ = [
     "ScanStats",
     "gather_findings",
     "scan_yarn_lock",
+    "scan_pnpm_lock",
     "parse_cache_entry",
     "scan_npm_cache",
     "compute_file_hash",
