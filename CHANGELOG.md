@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Fix package distribution to include scan_core subpackages using setuptools find_packages.
+  Previous explicit package list missed scripts.scan_core.* packages causing ModuleNotFoundError
+  on fresh installs after the modular refactoring
 - Comprehensive documentation enhancements: Add GitHub badges (CI, License, Python version),
   Features at a Glance comparison table, "Why This Tool?" section with value proposition,
   example output showcasing all report formats, improved Quick Start section. Create
