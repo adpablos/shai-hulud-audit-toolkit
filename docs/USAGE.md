@@ -70,6 +70,22 @@ disabled when output is piped or redirected to a file. Use `--no-color` to
 explicitly disable colors, or set the `NO_COLOR` environment variable per
 https://no-color.org/.
 
+### Disable emoji indicators
+```bash
+shai-hulud-audit --no-emoji
+```
+By default, scan results include emoji-based risk indicators for quick visual
+assessment:
+- 🚨 CRITICAL: 10+ findings or any IOC detections
+- ⚠️ WARNING: 3-9 findings
+- ✅ CLEAN: No compromised packages or IOCs detected
+- 📦 Package indicator for dependency findings
+- 📄 File indicator for IOC hash matches
+
+Emojis are automatically disabled when output is piped to a file or the terminal
+doesn't support them (e.g., `TERM=dumb`). Use `--no-emoji` to explicitly disable
+emoji output while keeping colors enabled.
+
 ## Configuration & Parser Hints
 
 Advisory sources are defined in `config/shai_hulud_sources.json`:
@@ -128,19 +144,19 @@ INFO: Indexed 1 packages covering 1 compromised versions.
 INFO: Scanning /tmp/.../workspace
 INFO: Summary for /tmp/.../workspace: 1 manifests (0 within node_modules); lockfiles: 1× package-lock.json.
 INFO: Aggregate summary: 1 manifests scanned (0 within node_modules); lockfiles: 1× package-lock.json.
-WARNING: Detected compromised dependencies:
-WARNING: - example@1.0.0 (package-lock.json) -> packages entry: node_modules/example
-WARNING: - example@1.0.0 (package.json) -> dependencies -> example = 1.0.0
-WARNING: Total findings: 2 (Dependencies: 2, IOCs: 0)
+WARNING: ⚠️ Detected compromised dependencies:
+WARNING: 📦 example@1.0.0 (package-lock.json) -> packages entry: node_modules/example
+WARNING: 📦 example@1.0.0 (package.json) -> dependencies -> example = 1.0.0
+WARNING: ⚠️ Total findings: 2 (Dependencies: 2, IOCs: 0)
 WARNING: Findings recorded in /tmp/.../logs/shai_hulud_scan_YYYYMMDD_HHMMSS.log
 ```
 
 If IOC hash matches are found, they will be reported separately:
 
 ```
-WARNING: Detected IOC hash matches (known malicious files):
-WARNING: - bundle.js (node_modules/@ctrl/tinycolor/bundle.js) -> SHA-256: de0e25a3e6c1e1e5998b306b7141b3dc4c0088da9d7bb47c1c00c91e6e4f85d6
-WARNING: Total findings: 3 (Dependencies: 2, IOCs: 1)
+WARNING: 🔴 Detected IOC hash matches (known malicious files):
+WARNING: 📄 bundle.js (node_modules/@ctrl/tinycolor/bundle.js) -> SHA-256: de0e25a3e6c1e1e5998b306b7141b3dc4c0088da9d7bb47c1c00c91e6e4f85d6
+WARNING: 🚨 Total findings: 3 (Dependencies: 2, IOCs: 1)
 ```
 
 The scanner elevates to `WARNING` level for each finding and terminates with

@@ -64,6 +64,41 @@ class Colors:
             return False
         return True
 
+
+class Emojis:
+    """Emoji indicators for visual scanning results."""
+
+    CRITICAL = "🚨"
+    WARNING = "⚠️"
+    INFO = "ℹ️"
+    CLEAN = "✅"
+    STATS = "📊"
+    PACKAGE = "📦"
+    FILE = "📄"
+    IOC = "🔴"
+    SEARCH = "🔍"
+
+    _enabled = True
+
+    @classmethod
+    def disable(cls) -> None:
+        """Disable all emoji output."""
+        cls._enabled = False
+
+    @classmethod
+    def get(cls, emoji: str) -> str:
+        """Return emoji if enabled, empty string otherwise."""
+        return emoji if cls._enabled else ""
+
+    @classmethod
+    def supports_emoji(cls) -> bool:
+        """Check if terminal supports emoji rendering."""
+        term = os.environ.get("TERM", "")
+        # Disable emojis in dumb terminals or when output is redirected
+        if term == "dumb" or not sys.stdout.isatty():
+            return False
+        return True
+
 COMPROMISED_PACKAGES: Dict[str, Set[str]] = {}
 SUPPRESSED_WARNING_SUBSTRINGS = (
     "resolve/test/resolver/malformed_package_json/package.json",
@@ -778,16 +813,36 @@ def gather_findings(root: Path, include_node_modules: bool, check_hashes: bool =
     return findings, stats
 
 
+def determine_risk_level(findings: List[Finding]) -> str:
+    """Determine risk level emoji based on finding count and severity."""
+    if not findings:
+        return Emojis.get(Emojis.CLEAN)
+
+    # IOC findings are always critical
+    ioc_count = sum(1 for f in findings if f.category == "ioc")
+    if ioc_count > 0:
+        return Emojis.get(Emojis.CRITICAL)
+
+    total = len(findings)
+    if total >= 10:
+        return Emojis.get(Emojis.CRITICAL)
+    if total >= 3:
+        return Emojis.get(Emojis.WARNING)
+    return Emojis.get(Emojis.WARNING)
+
+
 def summarize(findings: List[Finding], root: Optional[Path]) -> None:
     if not findings:
-        LOGGER.info("No compromised packages or IOCs detected.")
+        clean_msg = f"{Emojis.get(Emojis.CLEAN)} No compromised packages or IOCs detected."
+        LOGGER.info(clean_msg)
         return
 
     dependency_findings = [f for f in findings if f.category == "dependency"]
     ioc_findings = [f for f in findings if f.category == "ioc"]
 
     if dependency_findings:
-        header = Colors.colorize("Detected compromised dependencies:", Colors.RED + Colors.BOLD)
+        emoji = Emojis.get(Emojis.CRITICAL if len(dependency_findings) >= 10 else Emojis.WARNING)
+        header = Colors.colorize(f"{emoji} Detected compromised dependencies:", Colors.RED + Colors.BOLD)
         LOGGER.warning(header)
         for finding in dependency_findings:
             source = finding.source
@@ -797,10 +852,12 @@ def summarize(findings: List[Finding], root: Optional[Path]) -> None:
                 except Exception:  # noqa: BLE001 - best effort formatting
                     source = finding.source
             pkg_version = Colors.colorize(f"{finding.package}@{finding.version}", Colors.YELLOW)
-            LOGGER.warning("- %s (%s) -> %s", pkg_version, source, finding.evidence)
+            pkg_emoji = Emojis.get(Emojis.PACKAGE)
+            LOGGER.warning("%s %s (%s) -> %s", pkg_emoji, pkg_version, source, finding.evidence)
 
     if ioc_findings:
-        header = Colors.colorize("Detected IOC hash matches (known malicious files):", Colors.RED + Colors.BOLD)
+        emoji = Emojis.get(Emojis.IOC)
+        header = Colors.colorize(f"{emoji} Detected IOC hash matches (known malicious files):", Colors.RED + Colors.BOLD)
         LOGGER.warning(header)
         for finding in ioc_findings:
             source = finding.source
@@ -810,10 +867,12 @@ def summarize(findings: List[Finding], root: Optional[Path]) -> None:
                 except Exception:  # noqa: BLE001 - best effort formatting
                     source = finding.source
             filename = Colors.colorize(finding.version, Colors.YELLOW)
-            LOGGER.warning("- %s (%s) -> %s", filename, source, finding.evidence)
+            file_emoji = Emojis.get(Emojis.FILE)
+            LOGGER.warning("%s %s (%s) -> %s", file_emoji, filename, source, finding.evidence)
 
+    risk_emoji = determine_risk_level(findings)
     total_msg = Colors.colorize(
-        f"Total findings: {len(findings)} (Dependencies: {len(dependency_findings)}, IOCs: {len(ioc_findings)})",
+        f"{risk_emoji} Total findings: {len(findings)} (Dependencies: {len(dependency_findings)}, IOCs: {len(ioc_findings)})",
         Colors.RED + Colors.BOLD
     )
     LOGGER.warning(total_msg)
@@ -879,6 +938,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Disable color output in terminal (also respects NO_COLOR environment variable).",
     )
+    parser.add_argument(
+        "--no-emoji",
+        action="store_true",
+        help="Disable emoji indicators in terminal output (auto-disabled for non-TTY).",
+    )
     return parser.parse_args(argv)
 
 
@@ -888,6 +952,11 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     log_dir = Path(args.log_dir).expanduser().resolve()
     use_color = not args.no_color
     log_path = setup_logging(log_dir, args.log_level, use_color=use_color)
+
+    # Handle emoji flag - disable if requested or if terminal doesn't support it
+    if args.no_emoji or not Emojis.supports_emoji():
+        Emojis.disable()
+
     LOGGER.info("Detailed execution log: %s", log_path)
 
     advisory_path = resolve_advisory_path(args.advisory_file)

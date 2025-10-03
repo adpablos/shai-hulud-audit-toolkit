@@ -44,5 +44,5 @@ def test_scan_reports_compromised_dependency(tmp_path):
     log_text = log_files[-1].read_text(encoding="utf-8")
 
     assert "Detected compromised dependencies" in log_text
-    assert "- left-pad@1.0.0" in log_text
+    assert "left-pad@1.0.0" in log_text
     assert "Total findings: 1" in log_text
