@@ -10,6 +10,7 @@ common task-based workflows, configuration knobs, and troubleshooting tips.
 3. [Operational Tips](#operational-tips)
 4. [Interpreting Scan Output](#interpreting-scan-output)
 5. [Troubleshooting](#troubleshooting)
+6. [CI/CD Integration](#cicd-integration)
 
 ## Common Workflows
 
@@ -344,3 +345,253 @@ rerunning with `--json` to capture the findings programmatically.
 
 For additional help, file an issue on the project repository with the relevant
 log excerpts.
+
+## CI/CD Integration
+
+### GitHub Actions
+
+Basic workflow for pull requests and pushes:
+
+```yaml
+name: Shai-Hulud Security Scan
+on: [push, pull_request]
+
+jobs:
+  security-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install scanner
+        run: pip install shai-hulud-audit-toolkit
+      - name: Run security scan
+        run: shai-hulud-audit --json > findings.json
+      - name: Upload findings
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-findings
+          path: findings.json
+```
+
+Advanced workflow with matrix scanning:
+
+```yaml
+name: Multi-Project Security Scan
+on:
+  schedule:
+    - cron: '0 8 * * *'  # Daily at 8am UTC
+  workflow_dispatch:
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        project: [frontend, backend, shared-libs]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+      - name: Install scanner
+        run: pip install shai-hulud-audit-toolkit
+      - name: Scan ${{ matrix.project }}
+        run: |
+          shai-hulud-audit --format structured ./${{ matrix.project }} \
+            --skip-global --skip-cache
+      - name: Export JSON findings
+        if: always()
+        run: shai-hulud-audit --json ./${{ matrix.project }} > ${{ matrix.project }}-findings.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: ${{ matrix.project }}-findings
+          path: ${{ matrix.project }}-findings.json
+```
+
+### GitLab CI
+
+Basic `.gitlab-ci.yml`:
+
+```yaml
+security_scan:
+  stage: test
+  image: python:3.10
+  script:
+    - pip install shai-hulud-audit-toolkit
+    - shai-hulud-audit --json > findings.json
+  artifacts:
+    when: on_failure
+    paths:
+      - findings.json
+    expire_in: 30 days
+```
+
+Advanced with caching and manual review:
+
+```yaml
+security_scan:
+  stage: test
+  image: python:3.10
+  before_script:
+    - pip install shai-hulud-audit-toolkit
+  script:
+    - shai-hulud-audit --format structured
+    - shai-hulud-audit --json > findings.json
+  artifacts:
+    when: always
+    reports:
+      junit: findings.json  # GitLab can parse JSON for review
+    paths:
+      - findings.json
+      - logs/
+    expire_in: 30 days
+  cache:
+    key: ${CI_COMMIT_REF_SLUG}
+    paths:
+      - data/compromised_shaihulud.json
+  allow_failure: false
+```
+
+### Jenkins
+
+Jenkinsfile example:
+
+```groovy
+pipeline {
+    agent any
+
+    stages {
+        stage('Setup') {
+            steps {
+                sh 'pip install shai-hulud-audit-toolkit'
+            }
+        }
+
+        stage('Security Scan') {
+            steps {
+                script {
+                    def exitCode = sh(
+                        script: 'shai-hulud-audit --json > findings.json',
+                        returnStatus: true
+                    )
+
+                    if (exitCode != 0) {
+                        archiveArtifacts artifacts: 'findings.json', fingerprint: true
+                        error('Security scan detected compromised packages')
+                    }
+                }
+            }
+        }
+    }
+
+    post {
+        always {
+            archiveArtifacts artifacts: 'logs/**/*', allowEmptyArchive: true
+        }
+    }
+}
+```
+
+### CircleCI
+
+`.circleci/config.yml`:
+
+```yaml
+version: 2.1
+
+jobs:
+  security-scan:
+    docker:
+      - image: cimg/python:3.10
+    steps:
+      - checkout
+      - run:
+          name: Install scanner
+          command: pip install shai-hulud-audit-toolkit
+      - run:
+          name: Run scan
+          command: |
+            shai-hulud-audit --format structured
+            shai-hulud-audit --json > findings.json
+      - store_artifacts:
+          path: findings.json
+          destination: security-findings
+      - store_artifacts:
+          path: logs
+          destination: scan-logs
+
+workflows:
+  version: 2
+  security-checks:
+    jobs:
+      - security-scan
+```
+
+### Docker Integration
+
+Dockerfile for scanning in containers:
+
+```dockerfile
+FROM python:3.10-slim
+
+WORKDIR /scan
+
+# Install scanner
+RUN pip install --no-cache-dir shai-hulud-audit-toolkit
+
+# Copy project files
+COPY package.json package-lock.json ./
+COPY node_modules/ ./node_modules/
+
+# Run scan
+CMD ["shai-hulud-audit", "--skip-global", "--skip-cache", "--json"]
+```
+
+Build and run:
+
+```bash
+docker build -t project-scanner .
+docker run --rm project-scanner > findings.json
+```
+
+### Pre-commit Hook
+
+Add to `.pre-commit-config.yaml`:
+
+```yaml
+repos:
+  - repo: local
+    hooks:
+      - id: shai-hulud-scan
+        name: Shai-Hulud Security Scan
+        entry: shai-hulud-audit
+        args: ['--skip-fetch', '--advisory', 'data/compromised_shaihulud.json', '--json']
+        language: system
+        pass_filenames: false
+        stages: [commit]
+```
+
+Or create a git hook in `.git/hooks/pre-commit`:
+
+```bash
+#!/bin/bash
+shai-hulud-audit --skip-fetch --advisory data/compromised_shaihulud.json
+if [ $? -ne 0 ]; then
+    echo "Security scan failed. Commit aborted."
+    exit 1
+fi
+```
+
+### Best Practices for CI/CD
+
+1. **Caching**: Cache `data/compromised_shaihulud.json` between runs to avoid re-fetching
+2. **Fail fast**: Run security scans early in the pipeline
+3. **Artifacts**: Always save `findings.json` and logs for review
+4. **Scheduling**: Run scheduled scans (daily/weekly) to catch new advisories
+5. **Notifications**: Integrate with Slack/email for critical findings
+6. **Skip options**: Use `--skip-global` and `--skip-cache` in containers where these don't apply
+7. **Format choice**: Use `--format structured` for human review, `--json` for automation
