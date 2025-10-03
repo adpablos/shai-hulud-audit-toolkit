@@ -47,8 +47,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 ### Phase 1: Quick Wins (Current)
 From `release/0.2.0`:
 - ~~Issue #16: Repository metadata updates~~ ✅ Completed
-- Issue #10: Color-coded terminal output (1-2 days) ← **NEXT**
-- Issue #11: Emoji-based risk indicators (1 day)
+- ~~Issue #10: Color-coded terminal output~~ ✅ Completed
+- Issue #11: Emoji-based risk indicators (1 day) ← **NEXT**
 - Issue #12: Structured summary report (2-3 days)
 - Issue #15: Documentation enhancements (ongoing)
 
@@ -83,6 +83,18 @@ shai-hulud-audit --skip-fetch --advisory data/compromised_shaihulud.json
 - Double quotes, spaces (not tabs)
 - Keep `[fetch]` / `[scan]` prefixes in logs
 - Stdlib-only dependencies (no external packages unless compelling reason)
+
+### Code Quality & Size Limits
+- PEP 8; **type hints** on all public functions and data structures
+- Lint: `ruff check .` (currently used); consider adding `black`, `isort`, `mypy` (strict) in future
+- **Function size ≤ 50 lines**; **module size ≤ 500**. If exceeded, refactor or split.
+- **Max nesting: 2**. Single Responsibility for functions/classes.
+- Clarity > Cleverness. Simple > Complex. Reuse > Reinvent.
+- Remove dead code, magic numbers, and legacy hacks.
+
+**Enforcement Strategy:**
+- **New code (0.2.0+)**: Must follow these limits strictly
+- **Existing code**: Refactor incrementally when touched; defer large-scale refactoring to post-0.2.0
 
 ### Claude-Specific Reminders
 - Always read files before editing them
