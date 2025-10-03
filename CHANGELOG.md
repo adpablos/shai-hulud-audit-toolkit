@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Update README transparency statement to accurately credit both Codex (OpenAI) and Claude Code
+  (Anthropic) AI agents, matching the honest tone from CONTRIBUTING.md. Expanded to explain the
+  AI-first development model with human oversight and quality controls
 - Add colored output to fetch phase for consistent terminal formatting with scan phase.
   Fetch logs now use ColoredFormatter with [fetch] prefix matching [scan] style. Respects
   --no-color flag and NO_COLOR environment variable

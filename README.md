@@ -69,9 +69,11 @@ and audit their local environments for any compromised package versions.
 - **Concise logging** – per-source fetch logs and per-path scan stats saved under
   `logs/`.
 
-> Transparency: the toolkit is built collaboratively by a Codex agent with
-> human-in-the-loop review. See [`AGENTS.md`](AGENTS.md) for the shared
-> engineering guide.
+> **Transparency**: This toolkit is built collaboratively by AI agents (Codex/Claude Code)
+> with human-in-the-loop review. Code is primarily written by AI assistants following
+> structured guidelines in [`AGENTS.md`](AGENTS.md) and [`CLAUDE.md`](CLAUDE.md), with a
+> human maintainer reviewing, directing, and approving all changes. Quality is maintained
+> through automated testing (80% coverage), linting, and CI checks.
 
 ## Requirements
 
