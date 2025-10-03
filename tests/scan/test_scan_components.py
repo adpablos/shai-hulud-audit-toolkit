@@ -6,6 +6,8 @@ from pathlib import Path
 import pytest
 
 import scripts.scan as scanner
+from scripts.scan_core import utils as scan_utils
+from scripts.scan_core import config as scan_config
 
 
 def _write(path: Path, content: str) -> None:
@@ -57,7 +59,7 @@ def test_load_advisory_index_handles_varied_schemas(tmp_path: Path) -> None:
 
 
 def test_scan_yarn_and_pnpm_lock_detect_versions(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(scanner, "COMPROMISED_PACKAGES", {"example": {"2.3.4", "1.2.3"}})
+    monkeypatch.setattr(scan_utils, "COMPROMISED_PACKAGES", {"example": {"2.3.4", "1.2.3"}})
 
     yarn_lock = tmp_path / "yarn.lock"
     _write(
@@ -79,7 +81,7 @@ def test_scan_yarn_and_pnpm_lock_detect_versions(monkeypatch, tmp_path: Path) ->
 
 
 def test_gather_findings_respects_node_module_toggle(monkeypatch, tmp_path: Path) -> None:
-    monkeypatch.setattr(scanner, "COMPROMISED_PACKAGES", {"example": {"1.0.0"}})
+    monkeypatch.setattr(scan_utils, "COMPROMISED_PACKAGES", {"example": {"1.0.0"}})
 
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -139,7 +141,7 @@ def test_scan_npm_cache_deduplicates_entries(tmp_path: Path, monkeypatch) -> Non
     content_lines = ["", *[f"deadbeef\t{json.dumps(item)}" for item in payloads]]
     entry_path.write_text("\n".join(content_lines), encoding="utf-8")
 
-    monkeypatch.setattr(scanner, "COMPROMISED_PACKAGES", {"example": {"1.0.0"}, "other": {"3.0.0"}})
+    monkeypatch.setattr(scan_utils, "COMPROMISED_PACKAGES", {"example": {"1.0.0"}, "other": {"3.0.0"}})
 
     findings, inspected = scanner.scan_npm_cache(tmp_path / "index-v5")
     assert inspected == 2
@@ -172,7 +174,7 @@ def test_scan_file_for_iocs_positive_match(tmp_path: Path, monkeypatch) -> None:
     test_hash = hashlib.sha256(test_content).hexdigest()
 
     # Add it to the malicious hashes set
-    monkeypatch.setattr(scanner, "MALICIOUS_HASHES", {test_hash})
+    monkeypatch.setattr(scan_config, "MALICIOUS_HASHES", {test_hash})
 
     finding = scanner.scan_file_for_iocs(test_file)
     assert finding is not None
@@ -187,7 +189,7 @@ def test_scan_file_for_iocs_negative_match(tmp_path: Path, monkeypatch) -> None:
     test_file.write_bytes(b"benign content")
 
     # Set malicious hashes that don't match
-    monkeypatch.setattr(scanner, "MALICIOUS_HASHES", {"deadbeef" * 8})
+    monkeypatch.setattr(scan_config, "MALICIOUS_HASHES", {"deadbeef" * 8})
 
     finding = scanner.scan_file_for_iocs(test_file)
     assert finding is None
@@ -210,8 +212,8 @@ def test_gather_findings_with_hash_detection(tmp_path: Path, monkeypatch) -> Non
         {"name": "test-app", "dependencies": {"evil-pkg": "1.0.0"}}
     )
 
-    monkeypatch.setattr(scanner, "MALICIOUS_HASHES", {malicious_hash})
-    monkeypatch.setattr(scanner, "COMPROMISED_PACKAGES", {"evil-pkg": {"1.0.0"}})
+    monkeypatch.setattr(scan_config, "MALICIOUS_HASHES", {malicious_hash})
+    monkeypatch.setattr(scan_utils, "COMPROMISED_PACKAGES", {"evil-pkg": {"1.0.0"}})
 
     findings, stats = scanner.gather_findings(workspace, include_node_modules=False, check_hashes=True)
 
@@ -239,8 +241,8 @@ def test_gather_findings_hash_detection_disabled(tmp_path: Path, monkeypatch) ->
     malicious_file.write_bytes(malicious_content)
     malicious_hash = hashlib.sha256(malicious_content).hexdigest()
 
-    monkeypatch.setattr(scanner, "MALICIOUS_HASHES", {malicious_hash})
-    monkeypatch.setattr(scanner, "COMPROMISED_PACKAGES", {})
+    monkeypatch.setattr(scan_config, "MALICIOUS_HASHES", {malicious_hash})
+    monkeypatch.setattr(scan_utils, "COMPROMISED_PACKAGES", {})
 
     findings, stats = scanner.gather_findings(workspace, include_node_modules=False, check_hashes=False)
 

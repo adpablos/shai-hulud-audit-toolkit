@@ -4,6 +4,7 @@ from pathlib import Path
 
 import scripts.scan as scanner
 from scripts.scan import Finding
+from scripts.scan_core import config as scan_config
 
 
 def _write_json(path: Path, content: dict) -> None:
@@ -255,7 +256,7 @@ def test_run_detects_hash_iocs(tmp_path, capsys, monkeypatch):
     )
 
     # Temporarily set the malicious hashes
-    monkeypatch.setattr(scanner, "MALICIOUS_HASHES", {malicious_hash})
+    monkeypatch.setattr(scan_config, "MALICIOUS_HASHES", {malicious_hash})
 
     log_dir = tmp_path / "logs"
 
@@ -308,7 +309,7 @@ def test_run_hash_iocs_disabled(tmp_path, capsys, monkeypatch):
     _write_json(advisory_path, {"items": [{"package": "some-pkg", "version": "9.9.9"}]})
 
     # Temporarily set the malicious hashes
-    monkeypatch.setattr(scanner, "MALICIOUS_HASHES", {malicious_hash})
+    monkeypatch.setattr(scan_config, "MALICIOUS_HASHES", {malicious_hash})
 
     log_dir = tmp_path / "logs"
 
