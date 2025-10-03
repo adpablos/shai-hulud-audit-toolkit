@@ -201,6 +201,49 @@ JS_FILE_EXTENSIONS = {".js", ".mjs", ".cjs", ".ts", ".jsx", ".tsx"}
 # Maximum file size for pattern scanning (1 MB)
 MAX_PATTERN_SCAN_SIZE = 1 * 1024 * 1024
 
+# Data exfiltration indicators
+EXFILTRATION_INDICATORS = {
+    "suspicious_domains": [
+        "pastebin.com",
+        "paste.ee",
+        "hastebin.com",
+        "controlc.com",
+        "gist.github.com",
+        "githubusercontent.com",
+        "ngrok.io",
+        "serveo.net",
+        "localhost.run",
+        "webhook.site",
+        "requestbin.com",
+        "pipedream.com",
+    ],
+    "discord_webhooks": [
+        r"discord(?:app)?\.com/api/webhooks",
+    ],
+    "slack_webhooks": [
+        r"hooks\.slack\.com/services",
+    ],
+    "telegram_bots": [
+        r"api\.telegram\.org/bot",
+    ],
+    "generic_webhooks": [
+        r"webhook\.site/[a-z0-9-]+",
+        r"requestbin\.com/r/[a-z0-9]+",
+    ],
+    "ip_addresses": [
+        r"https?://(?:\d{1,3}\.){3}\d{1,3}",
+    ],
+    "data_collection": [
+        r"\.(env|npmrc|bashrc|bash_profile|zshrc)",
+        r"aws/credentials",
+        r"ssh/id_rsa",
+        r"AWS_.*(?:KEY|SECRET|TOKEN)",
+        r"GITHUB_TOKEN",
+        r"NPM_TOKEN",
+        r"CI_JOB_TOKEN",
+    ],
+}
+
 
 @dataclass
 class ScanStats:
@@ -363,7 +406,7 @@ class Finding:
     version: str
     source: str
     evidence: str
-    category: str = "dependency"  # "dependency", "ioc", "script_ioc", or "workflow_ioc"
+    category: str = "dependency"  # "dependency", "ioc", "script_ioc", "workflow_ioc", "suspicious_pattern", or "exfiltration"
     severity: str = "medium"  # "low", "medium", "high", or "critical"
 
     def to_dict(self) -> Dict[str, str]:
@@ -952,6 +995,85 @@ def scan_file_for_patterns(
     return findings
 
 
+def scan_for_exfiltration(file_path: Path, content: str, allowlist: Optional[Set[str]] = None) -> List[Finding]:
+    """Detect potential data exfiltration patterns in code with smart severity scoring."""
+    findings: List[Finding] = []
+    detected_categories: Set[str] = set()
+
+    # Track what we find for severity scoring
+    has_credential_access = False
+    has_network_call = False
+    exfil_findings: List[Dict[str, str]] = []
+
+    # Check for data collection patterns
+    for pattern in EXFILTRATION_INDICATORS["data_collection"]:
+        if re.search(pattern, content, re.IGNORECASE):
+            has_credential_access = True
+            break
+
+    # Check for suspicious domains
+    for domain in EXFILTRATION_INDICATORS["suspicious_domains"]:
+        # Skip if domain is in allowlist
+        if allowlist and domain in allowlist:
+            continue
+
+        if domain in content.lower():
+            has_network_call = True
+            exfil_findings.append({"type": "suspicious_domain", "value": domain})
+
+    # Check for webhook patterns (regex)
+    for category, patterns in EXFILTRATION_INDICATORS.items():
+        if category in ("suspicious_domains", "data_collection"):
+            continue  # Already handled
+
+        for pattern in patterns:
+            matches = list(re.finditer(pattern, content, re.IGNORECASE))
+            if matches:
+                has_network_call = True
+                for match in matches[:1]:  # Only report first match per pattern
+                    exfil_findings.append({"type": category, "value": match.group(0)})
+
+    # Determine severity based on combination of factors
+    if not exfil_findings:
+        return findings
+
+    # Critical: Credential access + exfiltration destination in same file
+    if has_credential_access and has_network_call:
+        severity = "critical"
+        evidence_prefix = "CRITICAL: Credential access + network transmission"
+    # High: Webhook endpoints or known exfiltration domains
+    elif any(f["type"] in ("discord_webhooks", "slack_webhooks", "telegram_bots", "generic_webhooks") for f in exfil_findings):
+        severity = "high"
+        evidence_prefix = "Webhook exfiltration pattern"
+    # Medium: Suspicious domains without credential access
+    elif exfil_findings:
+        severity = "medium"
+        evidence_prefix = "Suspicious network destination"
+    else:
+        severity = "low"
+        evidence_prefix = "Potential exfiltration indicator"
+
+    # Create findings (one per unique category to avoid noise)
+    for finding_info in exfil_findings:
+        category_key = finding_info["type"]
+        if category_key in detected_categories:
+            continue
+        detected_categories.add(category_key)
+
+        findings.append(
+            Finding(
+                package="exfiltration",
+                version=file_path.name,
+                source=str(file_path),
+                evidence=f"{evidence_prefix}: {finding_info['type']} -> {finding_info['value']}",
+                category="exfiltration",
+                severity=severity,
+            )
+        )
+
+    return findings
+
+
 def collect_targets(paths: Sequence[str]) -> List[Path]:
     resolved: List[Path] = []
     for raw in paths:
@@ -995,6 +1117,8 @@ def gather_findings(
     detect_patterns: bool = False,
     pattern_categories: Optional[Set[str]] = None,
     pattern_min_severity: str = "low",
+    detect_exfiltration: bool = False,
+    exfiltration_allowlist: Optional[Set[str]] = None,
 ) -> Tuple[List[Finding], ScanStats]:
     findings: List[Finding] = []
     stats = ScanStats()
@@ -1018,6 +1142,16 @@ def gather_findings(
             if detect_patterns and file_path.suffix in JS_FILE_EXTENSIONS:
                 pattern_findings = scan_file_for_patterns(file_path, pattern_categories, pattern_min_severity)
                 findings.extend(pattern_findings)
+
+            # Check for data exfiltration patterns in JavaScript files
+            if detect_exfiltration and file_path.suffix in JS_FILE_EXTENSIONS:
+                try:
+                    content = file_path.read_text(encoding="utf-8", errors="ignore")
+                    if not is_minified(content):
+                        exfil_findings = scan_for_exfiltration(file_path, content, exfiltration_allowlist)
+                        findings.extend(exfil_findings)
+                except (OSError, InterruptedError) as exc:  # noqa: PERF203
+                    LOGGER.debug("Unable to read file for exfiltration scan %s: %s", file_path, exc)
 
             if filename == "package.json":
                 if in_node_modules:
@@ -1084,6 +1218,7 @@ def print_structured_report(
     script_ioc_findings = [f for f in findings if f.category == "script_ioc"]
     workflow_ioc_findings = [f for f in findings if f.category == "workflow_ioc"]
     pattern_findings = [f for f in findings if f.category == "suspicious_pattern"]
+    exfiltration_findings = [f for f in findings if f.category == "exfiltration"]
     all_iocs = hash_ioc_findings + script_ioc_findings + workflow_ioc_findings
 
     print(f"\n{Emojis.get(Emojis.SEARCH)} FINDINGS")
@@ -1104,6 +1239,11 @@ def print_structured_report(
         if pattern_findings:
             pattern_line = f"      • Suspicious Patterns: {len(pattern_findings)}"
             print(Colors.colorize(pattern_line, Colors.YELLOW))
+        if exfiltration_findings:
+            exfil_line = f"      • Exfiltration Risks: {len(exfiltration_findings)}"
+            has_high_severity = any(f.severity in ("high", "critical") for f in exfiltration_findings)
+            exfil_color = Colors.RED if has_high_severity else Colors.YELLOW
+            print(Colors.colorize(exfil_line, exfil_color))
 
     # Section 4: Detailed Findings
     if findings:
@@ -1187,6 +1327,24 @@ def print_structured_report(
                         source = finding.source
                 category_name = Colors.colorize(finding.package, Colors.YELLOW)
                 print(f"   🔎 {category_name} ({finding.severity})")
+                print(f"      File: {finding.version}")
+                print(f"      Location: {source}")
+                print(f"      Evidence: {finding.evidence}")
+
+        if exfiltration_findings:
+            if dependency_findings or hash_ioc_findings or script_ioc_findings or workflow_ioc_findings or pattern_findings:
+                print()
+            print(Colors.colorize("   Data Exfiltration Risks:", Colors.RED + Colors.BOLD))
+            for finding in exfiltration_findings:
+                source = finding.source
+                if root:
+                    try:
+                        source = str(Path(source).resolve().relative_to(root))
+                    except Exception:  # noqa: BLE001 - best effort formatting
+                        source = finding.source
+                severity_color = Colors.RED if finding.severity in ("high", "critical") else Colors.YELLOW
+                indicator_type = Colors.colorize(finding.package, severity_color)
+                print(f"   🚨 {indicator_type} ({finding.severity})")
                 print(f"      File: {finding.version}")
                 print(f"      Location: {source}")
                 print(f"      Evidence: {finding.evidence}")
@@ -1286,9 +1444,29 @@ def print_compact_report(findings: List[Finding], root: Optional[Path]) -> None:
             category = Colors.colorize(finding.package, Colors.YELLOW)
             LOGGER.warning("🔎 %s [%s] (%s) -> %s", category, finding.severity, source, finding.evidence)
 
+    exfiltration_findings = [f for f in findings if f.category == "exfiltration"]
+    if exfiltration_findings:
+        header = Colors.colorize("🚨 Detected data exfiltration risks:", Colors.RED + Colors.BOLD)
+        LOGGER.warning(header)
+        for finding in exfiltration_findings:
+            source = finding.source
+            if root:
+                try:
+                    source = str(Path(source).resolve().relative_to(root))
+                except Exception:  # noqa: BLE001 - best effort formatting
+                    source = finding.source
+            indicator = Colors.colorize(finding.package, Colors.RED if finding.severity in ("high", "critical") else Colors.YELLOW)
+            LOGGER.warning("🚨 %s [%s] (%s) -> %s", indicator, finding.severity, source, finding.evidence)
+
     risk_emoji = determine_risk_level(findings)
+    summary_parts = [
+        f"Dependencies: {len(dependency_findings)}",
+        f"IOCs: {len(all_iocs)}",
+        f"Patterns: {len(pattern_findings)}",
+        f"Exfiltration: {len(exfiltration_findings)}",
+    ]
     total_msg = Colors.colorize(
-        f"{risk_emoji} Total findings: {len(findings)} (Dependencies: {len(dependency_findings)}, IOCs: {len(all_iocs)}, Patterns: {len(pattern_findings)})",
+        f"{risk_emoji} Total findings: {len(findings)} ({', '.join(summary_parts)})",
         Colors.RED + Colors.BOLD
     )
     LOGGER.warning(total_msg)
@@ -1378,6 +1556,16 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         help="Comma-separated list of pattern categories to detect (e.g., eval_usage,child_process).",
     )
     parser.add_argument(
+        "--detect-exfiltration",
+        action="store_true",
+        default=False,
+        help="Enable data exfiltration pattern detection in JavaScript files (default: disabled).",
+    )
+    parser.add_argument(
+        "--exfiltration-allowlist",
+        help="Comma-separated list of domains/IPs to exclude from exfiltration detection.",
+    )
+    parser.add_argument(
         "--log-dir",
         default="logs",
         help="Directory where timestamped scan logs are written (default: logs).",
@@ -1446,6 +1634,11 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     if args.pattern_categories:
         pattern_categories = set(cat.strip() for cat in args.pattern_categories.split(","))
 
+    # Parse exfiltration allowlist if provided
+    exfiltration_allowlist = None
+    if args.exfiltration_allowlist:
+        exfiltration_allowlist = set(item.strip() for item in args.exfiltration_allowlist.split(","))
+
     all_findings: List[Finding] = []
     overall_stats = ScanStats()
     for target in targets:
@@ -1458,6 +1651,8 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             detect_patterns=args.detect_patterns,
             pattern_categories=pattern_categories,
             pattern_min_severity=args.pattern_severity,
+            detect_exfiltration=args.detect_exfiltration,
+            exfiltration_allowlist=exfiltration_allowlist,
         )
         all_findings.extend(findings)
         overall_stats.merge(stats)

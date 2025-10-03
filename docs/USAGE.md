@@ -130,6 +130,52 @@ Format auto-detection: When `--format` is not specified, the tool detects whethe
 stdout is a TTY. Interactive terminals get `structured` format, while pipes and
 redirects get `compact` format for easier parsing.
 
+### Advanced threat detection
+
+#### Suspicious code pattern detection
+```bash
+# Enable pattern detection (disabled by default)
+shai-hulud-audit --detect-patterns
+
+# Filter by severity
+shai-hulud-audit --detect-patterns --pattern-severity high
+
+# Detect specific pattern categories
+shai-hulud-audit --detect-patterns --pattern-categories eval_usage,child_process
+```
+
+Pattern detection scans JavaScript files for suspicious code patterns:
+- **eval_usage**: Dynamic code evaluation (`eval()`, `Function()`)
+- **child_process**: Shell command execution
+- **network_calls**: HTTP/HTTPS requests, WebSocket connections
+- **credential_access**: Environment variable access, file reads
+- **obfuscation**: String concatenation, hex/base64 encoding
+- **file_system**: File write operations, directory traversal
+- **command_injection**: Shell metacharacters in command arguments
+
+Minified files are automatically skipped to reduce false positives.
+
+#### Data exfiltration detection
+```bash
+# Enable exfiltration detection (disabled by default)
+shai-hulud-audit --detect-exfiltration
+
+# Allowlist legitimate domains
+shai-hulud-audit --detect-exfiltration --exfiltration-allowlist ngrok.io,localhost
+```
+
+Exfiltration detection scans JavaScript files for data theft indicators:
+- **Webhook endpoints**: Discord, Slack, Telegram bot webhooks
+- **Suspicious domains**: Pastebin, ngrok, temp file sharing services
+- **Credential transmission**: SSH keys, AWS credentials, API tokens
+- **IP addresses**: Direct connections to IP addresses
+
+**Smart severity scoring**:
+- **Critical**: Credential access combined with network transmission in same file
+- **High**: Webhook endpoints detected
+- **Medium**: Suspicious domains without credential access
+- **Low**: Potential indicators requiring manual review
+
 ## Configuration & Parser Hints
 
 Advisory sources are defined in `config/shai_hulud_sources.json`:

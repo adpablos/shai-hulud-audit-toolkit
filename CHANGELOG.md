@@ -20,6 +20,11 @@
   obfuscation, file system access, and command injection patterns. Controlled via
   `--detect-patterns`, `--pattern-severity`, and `--pattern-categories` flags.
   Includes minified file detection and configurable severity filtering (#13)
+- Add data exfiltration pattern detection scanning for suspicious domains, webhook
+  endpoints (Discord, Slack, Telegram), credential access patterns, and network
+  transmission indicators with smart severity scoring (critical when credential
+  access combined with network calls). Controlled via `--detect-exfiltration` and
+  `--exfiltration-allowlist` flags (#14)
 
 ## v0.2.0 - 2025-10-03
 

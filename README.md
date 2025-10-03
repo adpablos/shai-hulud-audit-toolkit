@@ -24,6 +24,9 @@ and audit their local environments for any compromised package versions.
   - Hash-based: scans for known malicious SHA-256 hashes in suspicious files
   - Script-based: detects malicious patterns in package.json lifecycle hooks
   - Workflow-based: identifies suspicious GitHub Actions workflows
+- **Advanced threat detection** – optional scanning for:
+  - Suspicious code patterns: eval usage, child processes, network calls, credential access
+  - Data exfiltration: webhook endpoints, suspicious domains, credential transmission
 - **Structured summary reports** – multi-section layout with scan scope, coverage stats,
   findings summary, detailed findings, and recommendations (auto-detects TTY for format).
 - **Color-coded output** – ANSI color support with automatic terminal detection for
@@ -75,6 +78,9 @@ Useful modifiers (see [docs/USAGE.md](docs/USAGE.md) for more examples):
 - `--skip-cache` – skip cached npm tarballs (cache inspection runs by default; override the location with `--npm-cache-dir`)
 - `--no-hash-iocs` – disable hash-based IOC detection (enabled by default)
 - `--no-detect-iocs` – disable script and workflow IOC detection (enabled by default)
+- `--detect-patterns` – enable suspicious code pattern detection (disabled by default)
+- `--detect-exfiltration` – enable data exfiltration pattern detection (disabled by default)
+- `--exfiltration-allowlist domains` – comma-separated list of domains to exclude from exfiltration checks
 - `--no-color` – disable color output (also respects `NO_COLOR` environment variable)
 - `--no-emoji` – disable emoji indicators (auto-disabled for non-TTY terminals)
 - `--format [structured|compact|json]` – output format: `structured` (multi-section report, default for TTY), `compact` (legacy format, default for pipes), or `json`
