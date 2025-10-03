@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.2.0 - 2025-10-03
+
 - Update README transparency statement to accurately credit both Codex (OpenAI) and Claude Code
   (Anthropic) AI agents, matching the honest tone from CONTRIBUTING.md. Expanded to explain the
   AI-first development model with human oversight and quality controls
@@ -57,9 +59,6 @@
   packages). Automatically extracts namespaces from advisory data and warns on any
   package from that namespace. Controlled via `--warn-namespaces` / `--no-warn-namespaces`
   flags (default: enabled) (#7)
-
-## v0.2.0 - 2025-10-03
-
 - Inspect cached npm tarballs by default and expose `--skip-cache` /
   `--npm-cache-dir` controls, surfacing compromised cache hits in JSON
   output and logs (#9)
