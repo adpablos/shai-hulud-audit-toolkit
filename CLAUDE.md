@@ -130,8 +130,40 @@ shai-hulud-audit --skip-fetch --advisory data/compromised_shaihulud.json
 - Use `Edit` tool for modifications, not `Write`
 - Preserve exact indentation from Read tool (ignore line number prefix)
 - Check git status before creating commits
-- Run tests after significant changes
+- **ALWAYS run quality checks before committing** (see checklist below)
 - Update CHANGELOG.md "Unreleased" section for new features
+
+### Pre-Commit Quality Checklist (MANDATORY)
+
+**Run these commands before EVERY commit:**
+
+```bash
+# 1. Linting (must pass with zero errors)
+ruff check .
+
+# 2. Tests (must pass with 80%+ coverage)
+pytest --cov --cov-report=term-missing --cov-fail-under=80
+
+# 3. Only commit if BOTH pass
+git add <files>
+git commit -m "..."
+```
+
+**Never skip these checks.** If you push code that fails linting or tests, the CI will fail and block the release. Always verify locally first.
+
+**When to run:**
+- ✅ After adding/modifying any code
+- ✅ After changing imports or function signatures
+- ✅ After refactoring
+- ✅ Before every `git commit`
+- ✅ Before every `git push`
+
+**Red flags that mean you MUST run checks:**
+- 🚨 Modified any `.py` file
+- 🚨 Added/removed imports
+- 🚨 Changed function signatures
+- 🚨 Modified tests
+- 🚨 About to commit or push
 
 ## File Locations
 
