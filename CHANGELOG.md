@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Enhance PyPI discoverability with expanded keywords, comprehensive classifiers,
+  and complete project URLs in package metadata (#16)
+
 ## v0.2.0 - 2025-10-03
 
 - Inspect cached npm tarballs by default and expose `--skip-cache` /
