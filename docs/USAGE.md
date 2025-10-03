@@ -86,6 +86,40 @@ Emojis are automatically disabled when output is piped to a file or the terminal
 doesn't support them (e.g., `TERM=dumb`). Use `--no-emoji` to explicitly disable
 emoji output while keeping colors enabled.
 
+### Output formats
+```bash
+# Structured report (default for TTY)
+shai-hulud-audit --format structured
+
+# Compact report (default when piped)
+shai-hulud-audit --format compact
+
+# JSON output
+shai-hulud-audit --format json
+# or use the --json alias
+shai-hulud-audit --json
+```
+
+The `--format` flag controls the scan output format:
+
+- **`structured`** (default for terminal output): Multi-section report with clear
+  visual hierarchy including:
+  - Scan Scope: Paths that were scanned
+  - Coverage: Statistics on manifests, node modules, and lockfiles analyzed
+  - Findings: Summary counts of issues detected
+  - Detailed Findings: Individual package/IOC details with location and evidence
+  - Recommendations: Remediation steps (shown only when findings exist)
+
+- **`compact`** (default when output is piped): Legacy single-stream format that
+  logs findings inline without section headers. Suitable for grep/awk processing.
+
+- **`json`**: Machine-readable JSON array of finding objects. Each finding includes
+  `package`, `version`, `source`, `evidence`, and `category` fields.
+
+Format auto-detection: When `--format` is not specified, the tool detects whether
+stdout is a TTY. Interactive terminals get `structured` format, while pipes and
+redirects get `compact` format for easier parsing.
+
 ## Configuration & Parser Hints
 
 Advisory sources are defined in `config/shai_hulud_sources.json`:
@@ -120,8 +154,13 @@ Advisory sources are defined in `config/shai_hulud_sources.json`:
 
 ## Interpreting Scan Output
 
+The scanner produces different output formats depending on the `--format` flag
+(or auto-detection based on TTY). Examples below show both compact and structured
+formats.
+
 ### Clean run (exit code `0`)
 
+**Compact format** (default when piped, or `--format compact`):
 ```
 INFO: Detailed execution log: /tmp/.../logs/shai_hulud_scan_YYYYMMDD_HHMMSS.log
 INFO: Loading advisory data from /tmp/.../advisory.json
@@ -129,14 +168,38 @@ INFO: Indexed 1 packages covering 1 compromised versions.
 INFO: Scanning /tmp/.../workspace
 INFO: Summary for /tmp/.../workspace: 1 manifests (0 within node_modules); lockfiles: none.
 INFO: Aggregate summary: 1 manifests scanned (0 within node_modules); lockfiles: none.
-INFO: No compromised packages detected.
+INFO: ✅ No compromised packages or IOCs detected.
 INFO: Scan completed successfully. Log retained at /tmp/.../logs/shai_hulud_scan_YYYYMMDD_HHMMSS.log
+```
+
+**Structured format** (default for TTY, or `--format structured`):
+```
+======================================================================
+📊 SHAI-HULUD AUDIT REPORT
+======================================================================
+
+🔍 SCAN SCOPE
+----------------------------------------------------------------------
+   • /tmp/.../workspace
+
+📊 COVERAGE
+----------------------------------------------------------------------
+   Manifests scanned:     1
+   Node modules scanned:  0
+   Lockfiles analyzed:    none
+
+🔍 FINDINGS
+----------------------------------------------------------------------
+   ✅ No compromised packages or IOCs detected
+
+======================================================================
 ```
 
 No matches were found and the process exited with status `0`.
 
 ### Findings present (exit code `1`)
 
+**Compact format**:
 ```
 INFO: Detailed execution log: /tmp/.../logs/shai_hulud_scan_YYYYMMDD_HHMMSS.log
 INFO: Loading advisory data from /tmp/.../advisory.json
@@ -151,12 +214,55 @@ WARNING: ⚠️ Total findings: 2 (Dependencies: 2, IOCs: 0)
 WARNING: Findings recorded in /tmp/.../logs/shai_hulud_scan_YYYYMMDD_HHMMSS.log
 ```
 
-If IOC hash matches are found, they will be reported separately:
+**Structured format**:
+```
+======================================================================
+📊 SHAI-HULUD AUDIT REPORT
+======================================================================
+
+🔍 SCAN SCOPE
+----------------------------------------------------------------------
+   • /tmp/.../workspace
+
+📊 COVERAGE
+----------------------------------------------------------------------
+   Manifests scanned:     1
+   Node modules scanned:  0
+   Lockfiles analyzed:    1× package-lock.json
+
+🔍 FINDINGS
+----------------------------------------------------------------------
+   ⚠️ Total Issues:        2
+      • Dependencies:      2
+      • IOC Matches:       0
+
+⚠️ DETAILED FINDINGS
+----------------------------------------------------------------------
+   Compromised Dependencies:
+   📦 example@1.0.0
+      Location: package-lock.json
+      Evidence: packages entry: node_modules/example
+   📦 example@1.0.0
+      Location: package.json
+      Evidence: dependencies -> example = 1.0.0
+
+💡 RECOMMENDATIONS
+----------------------------------------------------------------------
+   1. Review detailed findings above
+   2. Check advisory sources for remediation guidance
+   3. Update or remove compromised packages
+   4. Re-scan after remediation
+
+======================================================================
+```
+
+If IOC hash matches are found, they appear in a separate subsection:
 
 ```
-WARNING: 🔴 Detected IOC hash matches (known malicious files):
-WARNING: 📄 bundle.js (node_modules/@ctrl/tinycolor/bundle.js) -> SHA-256: de0e25a3e6c1e1e5998b306b7141b3dc4c0088da9d7bb47c1c00c91e6e4f85d6
-WARNING: 🚨 Total findings: 3 (Dependencies: 2, IOCs: 1)
+   IOC Hash Matches (Known Malicious Files):
+   📄 bundle.js
+      Location: node_modules/@ctrl/tinycolor/bundle.js
+      Evidence: SHA-256: de0e25a3e6c1e1e5998b306b7141b3dc4c0088da9d7bb47c1c00c91e6e4f85d6
 ```
 
 The scanner elevates to `WARNING` level for each finding and terminates with

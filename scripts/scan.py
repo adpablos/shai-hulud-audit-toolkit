@@ -831,7 +831,102 @@ def determine_risk_level(findings: List[Finding]) -> str:
     return Emojis.get(Emojis.WARNING)
 
 
-def summarize(findings: List[Finding], root: Optional[Path]) -> None:
+def print_structured_report(
+    findings: List[Finding], stats: ScanStats, scan_paths: List[Path], root: Optional[Path] = None
+) -> None:
+    """Print a structured multi-section summary report."""
+    separator = "=" * 70
+    subseparator = "-" * 70
+
+    # Header
+    print(f"\n{separator}")
+    title = f"{Emojis.get(Emojis.STATS)} SHAI-HULUD AUDIT REPORT"
+    print(Colors.colorize(title, Colors.BOLD))
+    print(separator)
+
+    # Section 1: Scan Scope
+    print(f"\n{Emojis.get(Emojis.SEARCH)} SCAN SCOPE")
+    print(subseparator)
+    for path in scan_paths:
+        print(f"   • {path}")
+
+    # Section 2: Coverage Statistics
+    print(f"\n{Emojis.get(Emojis.STATS)} COVERAGE")
+    print(subseparator)
+    print(f"   Manifests scanned:     {stats.manifests}")
+    print(f"   Node modules scanned:  {stats.node_module_manifests}")
+    lockfiles_desc = stats.describe_lockfiles()
+    print(f"   Lockfiles analyzed:    {lockfiles_desc}")
+
+    # Section 3: Findings Summary
+    dependency_findings = [f for f in findings if f.category == "dependency"]
+    ioc_findings = [f for f in findings if f.category == "ioc"]
+
+    print(f"\n{Emojis.get(Emojis.SEARCH)} FINDINGS")
+    print(subseparator)
+    if not findings:
+        clean_msg = f"   {Emojis.get(Emojis.CLEAN)} No compromised packages or IOCs detected"
+        print(Colors.colorize(clean_msg, Colors.GREEN))
+    else:
+        risk_emoji = determine_risk_level(findings)
+        total_line = f"   {risk_emoji} Total Issues:        {len(findings)}"
+        print(Colors.colorize(total_line, Colors.RED + Colors.BOLD))
+        dep_line = f"      • Dependencies:      {len(dependency_findings)}"
+        print(Colors.colorize(dep_line, Colors.YELLOW if dependency_findings else ""))
+        ioc_line = f"      • IOC Matches:       {len(ioc_findings)}"
+        print(Colors.colorize(ioc_line, Colors.RED if ioc_findings else ""))
+
+    # Section 4: Detailed Findings
+    if findings:
+        print(f"\n{Emojis.get(Emojis.WARNING)} DETAILED FINDINGS")
+        print(subseparator)
+
+        if dependency_findings:
+            print(Colors.colorize("   Compromised Dependencies:", Colors.RED + Colors.BOLD))
+            for finding in dependency_findings:
+                source = finding.source
+                if root:
+                    try:
+                        source = str(Path(source).resolve().relative_to(root))
+                    except Exception:  # noqa: BLE001 - best effort formatting
+                        source = finding.source
+                pkg_version = Colors.colorize(f"{finding.package}@{finding.version}", Colors.YELLOW)
+                pkg_emoji = Emojis.get(Emojis.PACKAGE)
+                print(f"   {pkg_emoji} {pkg_version}")
+                print(f"      Location: {source}")
+                print(f"      Evidence: {finding.evidence}")
+
+        if ioc_findings:
+            if dependency_findings:
+                print()
+            print(Colors.colorize("   IOC Hash Matches (Known Malicious Files):", Colors.RED + Colors.BOLD))
+            for finding in ioc_findings:
+                source = finding.source
+                if root:
+                    try:
+                        source = str(Path(source).resolve().relative_to(root))
+                    except Exception:  # noqa: BLE001 - best effort formatting
+                        source = finding.source
+                filename = Colors.colorize(finding.version, Colors.YELLOW)
+                file_emoji = Emojis.get(Emojis.FILE)
+                print(f"   {file_emoji} {filename}")
+                print(f"      Location: {source}")
+                print(f"      Evidence: {finding.evidence}")
+
+    # Section 5: Recommendations
+    if findings:
+        print(f"\n{Emojis.get(Emojis.INFO)} RECOMMENDATIONS")
+        print(subseparator)
+        print("   1. Review detailed findings above")
+        print("   2. Check advisory sources for remediation guidance")
+        print("   3. Update or remove compromised packages")
+        print("   4. Re-scan after remediation")
+
+    print(f"\n{separator}\n")
+
+
+def print_compact_report(findings: List[Finding], root: Optional[Path]) -> None:
+    """Print a compact summary report (legacy format)."""
     if not findings:
         clean_msg = f"{Emojis.get(Emojis.CLEAN)} No compromised packages or IOCs detected."
         LOGGER.info(clean_msg)
@@ -886,7 +981,12 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         default=["."],
         help="Project directories to scan (default: current directory).",
     )
-    parser.add_argument("--json", action="store_true", dest="json_output", help="Emit findings as JSON.")
+    parser.add_argument("--json", action="store_true", dest="json_output", help="Emit findings as JSON (alias for --format json).")
+    parser.add_argument(
+        "--format",
+        choices=["structured", "compact", "json"],
+        help="Output format: structured (multi-section), compact (legacy), or json. Auto-detects based on TTY.",
+    )
     parser.add_argument(
         "--include-node-modules",
         action="store_true",
@@ -1033,11 +1133,23 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
         overall_stats.describe_lockfiles(),
     )
 
+    # Determine output format
+    output_format = args.format
     if args.json_output:
+        output_format = "json"
+    elif output_format is None:
+        # Auto-detect: structured for TTY, compact for pipes
+        output_format = "structured" if sys.stdout.isatty() else "compact"
+
+    # Generate output in selected format
+    if output_format == "json":
         print(json.dumps([f.to_dict() for f in all_findings], indent=2))
-    else:
+    elif output_format == "structured":
         root = targets[0] if len(targets) == 1 else None
-        summarize(all_findings, root=root)
+        print_structured_report(all_findings, overall_stats, targets, root=root)
+    else:  # compact
+        root = targets[0] if len(targets) == 1 else None
+        print_compact_report(all_findings, root=root)
 
     if all_findings:
         LOGGER.warning("Findings recorded in %s", log_path)
