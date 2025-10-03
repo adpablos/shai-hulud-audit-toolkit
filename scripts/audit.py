@@ -146,6 +146,7 @@ def run(argv: list[str] | None = None) -> int:
             timeout=timeout,
             log_dir=fetch_log_dir,
             log_level=log_level,
+            use_color=not args.no_color,
         )
 
         print(

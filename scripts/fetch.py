@@ -316,8 +316,9 @@ def fetch_sources(
     timeout: int,
     log_dir: Path,
     log_level: str,
+    use_color: bool = True,
 ) -> Dict[str, object]:
-    log_path = setup_logging(log_dir, log_level)
+    log_path = setup_logging(log_dir, log_level, use_color)
 
     source_entries = load_sources_config(config_path)
 
@@ -403,7 +404,19 @@ def fetch_sources(
     }
 
 
-def setup_logging(log_dir: Path, level: str) -> Path:
+def setup_logging(log_dir: Path, level: str, use_color: bool = True) -> Path:
+    """Configure logging with optional color support.
+
+    Args:
+        log_dir: Directory for log files
+        level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+        use_color: Enable ANSI color codes in console output
+
+    Returns:
+        Path to the created log file
+    """
+    from scripts.scan_core.reporting.formatters import ColoredFormatter, Colors
+
     log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / f"shai_hulud_fetch_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}.log"
 
@@ -421,7 +434,13 @@ def setup_logging(log_dir: Path, level: str) -> Path:
 
     console_handler = logging.StreamHandler()
     console_handler.setLevel(numeric_level)
-    console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+
+    # Use colored formatter for console if color is supported and enabled
+    if use_color and Colors.supports_color():
+        console_handler.setFormatter(ColoredFormatter("[fetch] %(message)s"))
+    else:
+        Colors.disable()
+        console_handler.setFormatter(logging.Formatter("[fetch] %(message)s"))
 
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
@@ -464,6 +483,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="List available parser hints and exit.",
     )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable colored output (also respects NO_COLOR environment variable).",
+    )
     return parser.parse_args(argv)
 
 
@@ -484,6 +508,7 @@ def run(argv: Optional[List[str]] = None) -> int:
         timeout=args.timeout,
         log_dir=log_dir,
         log_level=args.log_level,
+        use_color=not args.no_color,
     )
     return 0
 

@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Add colored output to fetch phase for consistent terminal formatting with scan phase.
+  Fetch logs now use ColoredFormatter with [fetch] prefix matching [scan] style. Respects
+  --no-color flag and NO_COLOR environment variable
 - Fix package distribution to include scan_core subpackages using setuptools find_packages.
   Previous explicit package list missed scripts.scan_core.* packages causing ModuleNotFoundError
   on fresh installs after the modular refactoring
