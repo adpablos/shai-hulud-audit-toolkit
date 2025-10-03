@@ -763,7 +763,7 @@ def test_no_namespace_warnings_flag(tmp_path, capsys):
 
     log_dir = tmp_path / "logs"
 
-    exit_code = scan.run(
+    scan.run(
         [
             str(project_dir),
             "--advisory-file",

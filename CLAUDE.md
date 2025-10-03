@@ -85,16 +85,45 @@ shai-hulud-audit --skip-fetch --advisory data/compromised_shaihulud.json
 - Stdlib-only dependencies (no external packages unless compelling reason)
 
 ### Code Quality & Size Limits
-- PEP 8; **type hints** on all public functions and data structures
-- Lint: `ruff check .` (currently used); consider adding `black`, `isort`, `mypy` (strict) in future
-- **Function size ≤ 50 lines**; **module size ≤ 500**. If exceeded, refactor or split.
-- **Max nesting: 2**. Single Responsibility for functions/classes.
-- Clarity > Cleverness. Simple > Complex. Reuse > Reinvent.
-- Remove dead code, magic numbers, and legacy hacks.
 
-**Enforcement Strategy:**
-- **New code (0.2.0+)**: Must follow these limits strictly
-- **Existing code**: Refactor incrementally when touched; defer large-scale refactoring to post-0.2.0
+**Core Principles** (always apply):
+- **KISS (Keep It Simple, Stupid)**: Simple solutions over complex ones
+- **YAGNI (You Aren't Gonna Need It)**: Don't add code "just in case"
+- **Clarity > Cleverness**: Code should be obvious, not clever
+- **Simple > Complex**: Prefer straightforward approaches
+- **Reuse > Reinvent**: Use existing patterns and helpers
+- **No legacy code**: All code is first-class; no "deprecated-but-kept" patterns
+
+**Style & Standards**:
+- PEP 8 compliance
+- **Type hints** on all public functions and data structures
+- Line length: 140 characters
+- Double quotes, spaces (not tabs)
+- Lint: `ruff check .` must pass with zero errors
+
+**Size & Complexity Targets**:
+- **Module size**: ≤ 500 lines (hard limit)
+- **Function size**: ≤ 50 lines (guideline, not dogma)
+  - CLI parsers and data structures may reasonably exceed this
+  - Business logic should stay well under 50 lines
+  - If a function is >70 lines, strongly consider refactoring
+- **Nesting depth**: ≤ 2 levels for business logic
+  - Data structures (dicts, lists) don't count toward nesting
+  - Early returns/continues are encouraged to reduce depth
+  - Deep nesting usually signals need for helper functions
+
+**What to Remove**:
+- Dead code (unused functions, commented code)
+- Magic numbers (use named constants)
+- Duplication (extract to helpers after 2nd occurrence)
+- "Legacy" terminology (implies technical debt we don't want)
+
+**Pragmatic Application**:
+- **New code (0.2.0+)**: Follow these standards
+- **Existing code**: Refactor when touched; no need for mass rewrites
+- **Be pragmatic**: A 55-line function that's crystal clear > two 30-line functions that obscure logic
+- **Focus on real complexity**: Deep nesting in business logic is bad; data structure nesting is fine
+- **Maintainability first**: If splitting makes code harder to understand, don't split
 
 ### Claude-Specific Reminders
 - Always read files before editing them
