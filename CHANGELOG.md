@@ -25,6 +25,11 @@
   transmission indicators with smart severity scoring (critical when credential
   access combined with network calls). Controlled via `--detect-exfiltration` and
   `--exfiltration-allowlist` flags (#14)
+- Add namespace compromise warnings to alert when dependencies use compromised
+  maintainer scopes (e.g., `@scope/package` where `@scope` contains known malicious
+  packages). Automatically extracts namespaces from advisory data and warns on any
+  package from that namespace. Controlled via `--warn-namespaces` / `--no-warn-namespaces`
+  flags (default: enabled) (#7)
 
 ## v0.2.0 - 2025-10-03
 

@@ -100,6 +100,7 @@ class Emojis:
         return True
 
 COMPROMISED_PACKAGES: Dict[str, Set[str]] = {}
+COMPROMISED_NAMESPACES: Set[str] = set()
 SUPPRESSED_WARNING_SUBSTRINGS = (
     "resolve/test/resolver/malformed_package_json/package.json",
 )
@@ -396,8 +397,16 @@ def load_advisory_index(path: Path) -> Dict[str, Set[str]]:
 
 def set_compromised_index(index: Dict[str, Set[str]]) -> None:
     """Populate the global lookup structures with the advisory index."""
-    global COMPROMISED_PACKAGES
+    global COMPROMISED_PACKAGES, COMPROMISED_NAMESPACES
     COMPROMISED_PACKAGES = {package: set(versions) for package, versions in index.items()}
+
+    # Extract compromised namespaces (scoped packages starting with @)
+    namespaces = set()
+    for package in COMPROMISED_PACKAGES:
+        if package.startswith("@") and "/" in package:
+            namespace = package.split("/")[0]
+            namespaces.add(namespace)
+    COMPROMISED_NAMESPACES = namespaces
 
 
 @dataclass
@@ -406,7 +415,8 @@ class Finding:
     version: str
     source: str
     evidence: str
-    category: str = "dependency"  # "dependency", "ioc", "script_ioc", "workflow_ioc", "suspicious_pattern", or "exfiltration"
+    # "dependency", "ioc", "script_ioc", "workflow_ioc", "suspicious_pattern", "exfiltration", or "namespace_warning"
+    category: str = "dependency"
     severity: str = "medium"  # "low", "medium", "high", or "critical"
 
     def to_dict(self) -> Dict[str, str]:
@@ -513,6 +523,18 @@ def check_version_match(package: str, spec: str) -> Optional[str]:
     return None
 
 
+def check_namespace_warning(package: str) -> bool:
+    """Check if package belongs to a compromised namespace but is not itself compromised."""
+    # Only warn if:
+    # 1. Package is scoped (starts with @)
+    # 2. Package's namespace is in the compromised set
+    # 3. Package itself is NOT in the compromised packages list
+    if not package.startswith("@") or "/" not in package:
+        return False
+    namespace = package.split("/")[0]
+    return namespace in COMPROMISED_NAMESPACES and package not in COMPROMISED_PACKAGES
+
+
 def iter_dependency_specs(block: object) -> Iterator[Tuple[str, str]]:
     if isinstance(block, dict):
         for key, value in block.items():
@@ -551,11 +573,12 @@ def detect_script_iocs(scripts: Dict[str, str], package_json_path: Path) -> List
     return findings
 
 
-def scan_package_json(path: Path, detect_iocs: bool = True) -> List[Finding]:
+def scan_package_json(path: Path, detect_iocs: bool = True, warn_namespaces: bool = True) -> List[Finding]:
     data = load_json(path)
     if data is None:
         return []
     findings: List[Finding] = []
+    namespace_warnings_seen: Set[str] = set()  # Track namespaces we've already warned about
     sections = [
         "dependencies",
         "devDependencies",
@@ -580,6 +603,20 @@ def scan_package_json(path: Path, detect_iocs: bool = True) -> List[Finding]:
                         evidence=f"{section} -> {pkg} = {spec}",
                     )
                 )
+            elif warn_namespaces and check_namespace_warning(pkg):
+                namespace = pkg.split("/")[0]
+                if namespace not in namespace_warnings_seen:
+                    namespace_warnings_seen.add(namespace)
+                    findings.append(
+                        Finding(
+                            package=pkg,
+                            version=str(spec),
+                            source=str(path),
+                            evidence=f"{section} -> Namespace {namespace} is compromised; {pkg} itself not flagged",
+                            category="namespace_warning",
+                            severity="medium",
+                        )
+                    )
 
     # Check for script IOCs if enabled
     if detect_iocs and "scripts" in data and isinstance(data["scripts"], dict):
@@ -588,26 +625,42 @@ def scan_package_json(path: Path, detect_iocs: bool = True) -> List[Finding]:
     return findings
 
 
-def scan_npm_lock(path: Path) -> List[Finding]:
+def scan_npm_lock(path: Path, warn_namespaces: bool = True) -> List[Finding]:
     data = load_json(path)
     if data is None:
         return []
     findings: List[Finding] = []
+    namespace_warnings_seen: Set[str] = set()
 
     def walk_dependencies(deps: Dict[str, object], context: str) -> None:
         for name, meta in deps.items():
             if not isinstance(meta, dict):
                 continue
             version = meta.get("version")
-            if isinstance(version, str) and check_version_match(name, version):
-                findings.append(
-                    Finding(
-                        package=name,
-                        version=normalize_version(version) or version,
-                        source=str(path),
-                        evidence=f"{context}:{name}",
+            if isinstance(version, str):
+                if check_version_match(name, version):
+                    findings.append(
+                        Finding(
+                            package=name,
+                            version=normalize_version(version) or version,
+                            source=str(path),
+                            evidence=f"{context}:{name}",
+                        )
                     )
-                )
+                elif warn_namespaces and check_namespace_warning(name):
+                    namespace = name.split("/")[0]
+                    if namespace not in namespace_warnings_seen:
+                        namespace_warnings_seen.add(namespace)
+                        findings.append(
+                            Finding(
+                                package=name,
+                                version=normalize_version(version) or version,
+                                source=str(path),
+                                evidence=f"Namespace {namespace} is compromised; {name} itself not flagged",
+                                category="namespace_warning",
+                                severity="medium",
+                            )
+                        )
             nested = meta.get("dependencies")
             if isinstance(nested, dict):
                 walk_dependencies(nested, context=f"{context}/{name}")
@@ -618,15 +671,30 @@ def scan_npm_lock(path: Path) -> List[Finding]:
                 continue
             name = meta.get("name")
             version = meta.get("version")
-            if isinstance(name, str) and isinstance(version, str) and check_version_match(name, version):
-                findings.append(
-                    Finding(
-                        package=name,
-                        version=normalize_version(version) or version,
-                        source=str(path),
-                        evidence=f"packages entry: {pkg_path}",
+            if isinstance(name, str) and isinstance(version, str):
+                if check_version_match(name, version):
+                    findings.append(
+                        Finding(
+                            package=name,
+                            version=normalize_version(version) or version,
+                            source=str(path),
+                            evidence=f"packages entry: {pkg_path}",
+                        )
                     )
-                )
+                elif warn_namespaces and check_namespace_warning(name):
+                    namespace = name.split("/")[0]
+                    if namespace not in namespace_warnings_seen:
+                        namespace_warnings_seen.add(namespace)
+                        findings.append(
+                            Finding(
+                                package=name,
+                                version=normalize_version(version) or version,
+                                source=str(path),
+                                evidence=f"Namespace {namespace} is compromised; {name} itself not flagged",
+                                category="namespace_warning",
+                                severity="medium",
+                            )
+                        )
     if "dependencies" in data and isinstance(data["dependencies"], dict):
         walk_dependencies(data["dependencies"], context="dependencies")
     return findings
@@ -668,8 +736,9 @@ def parse_yarn_lock(path: Path) -> Iterator[Tuple[str, str]]:
                     yield pkg, version
 
 
-def scan_yarn_lock(path: Path) -> List[Finding]:
+def scan_yarn_lock(path: Path, warn_namespaces: bool = True) -> List[Finding]:
     findings: List[Finding] = []
+    namespace_warnings_seen: Set[str] = set()
     for pkg, version in parse_yarn_lock(path):
         match = check_version_match(pkg, version)
         if match:
@@ -681,14 +750,29 @@ def scan_yarn_lock(path: Path) -> List[Finding]:
                     evidence=f"lock entry for {pkg}",
                 )
             )
+        elif warn_namespaces and check_namespace_warning(pkg):
+            namespace = pkg.split("/")[0]
+            if namespace not in namespace_warnings_seen:
+                namespace_warnings_seen.add(namespace)
+                findings.append(
+                    Finding(
+                        package=pkg,
+                        version=version,
+                        source=str(path),
+                        evidence=f"Namespace {namespace} is compromised; {pkg} itself not flagged",
+                        category="namespace_warning",
+                        severity="medium",
+                    )
+                )
     return findings
 
 
 PNPM_PACKAGE_PATTERN = re.compile(r'^\s{2}([^:]+):\s*$')
 
 
-def scan_pnpm_lock(path: Path) -> List[Finding]:
+def scan_pnpm_lock(path: Path, warn_namespaces: bool = True) -> List[Finding]:
     findings: List[Finding] = []
+    namespace_warnings_seen: Set[str] = set()
     in_packages = False
     with path.open("r", encoding="utf-8") as handle:
         for line in handle:
@@ -730,6 +814,20 @@ def scan_pnpm_lock(path: Path) -> List[Finding]:
                         evidence=f"packages entry: {key}",
                     )
                 )
+            elif warn_namespaces and version and check_namespace_warning(name):
+                namespace = name.split("/")[0]
+                if namespace not in namespace_warnings_seen:
+                    namespace_warnings_seen.add(namespace)
+                    findings.append(
+                        Finding(
+                            package=name,
+                            version=version,
+                            source=str(path),
+                            evidence=f"Namespace {namespace} is compromised; {name} itself not flagged",
+                            category="namespace_warning",
+                            severity="medium",
+                        )
+                    )
     return findings
 
 
@@ -759,22 +857,36 @@ def safe_walk(root: Path, include_node_modules: bool) -> Iterator[Tuple[Path, Li
         LOGGER.warning("Traversal aborted in %s: %s", root, exc)
 
 
-def scan_installed_package(package_json: Path) -> List[Finding]:
+def scan_installed_package(package_json: Path, warn_namespaces: bool = True) -> List[Finding]:
     data = load_json(package_json)
     if not data:
         return []
     name = data.get("name")
     version = data.get("version")
-    if isinstance(name, str) and isinstance(version, str) and check_version_match(name, version):
-        match = normalize_version(version) or version
-        return [
-            Finding(
-                package=name,
-                version=match,
-                source=str(package_json),
-                evidence="installed module package.json",
-            )
-        ]
+    if isinstance(name, str) and isinstance(version, str):
+        if check_version_match(name, version):
+            match = normalize_version(version) or version
+            return [
+                Finding(
+                    package=name,
+                    version=match,
+                    source=str(package_json),
+                    evidence="installed module package.json",
+                )
+            ]
+        elif warn_namespaces and check_namespace_warning(name):
+            namespace = name.split("/")[0]
+            match = normalize_version(version) or version
+            return [
+                Finding(
+                    package=name,
+                    version=match,
+                    source=str(package_json),
+                    evidence=f"Namespace {namespace} is compromised; {name} itself not flagged",
+                    category="namespace_warning",
+                    severity="medium",
+                )
+            ]
     return []
 
 
@@ -1119,6 +1231,7 @@ def gather_findings(
     pattern_min_severity: str = "low",
     detect_exfiltration: bool = False,
     exfiltration_allowlist: Optional[Set[str]] = None,
+    warn_namespaces: bool = True,
 ) -> Tuple[List[Finding], ScanStats]:
     findings: List[Finding] = []
     stats = ScanStats()
@@ -1157,13 +1270,13 @@ def gather_findings(
                 if in_node_modules:
                     if include_node_modules:
                         stats.node_module_manifests += 1
-                        findings.extend(scan_installed_package(file_path))
+                        findings.extend(scan_installed_package(file_path, warn_namespaces=warn_namespaces))
                 else:
                     stats.manifests += 1
-                    findings.extend(scan_package_json(file_path, detect_iocs=detect_iocs))
+                    findings.extend(scan_package_json(file_path, detect_iocs=detect_iocs, warn_namespaces=warn_namespaces))
             elif filename in LOCKFILE_HANDLERS and not in_node_modules:
                 stats.lockfiles[filename] += 1
-                findings.extend(LOCKFILE_HANDLERS[filename](file_path))
+                findings.extend(LOCKFILE_HANDLERS[filename](file_path, warn_namespaces=warn_namespaces))
     return findings, stats
 
 
@@ -1219,6 +1332,7 @@ def print_structured_report(
     workflow_ioc_findings = [f for f in findings if f.category == "workflow_ioc"]
     pattern_findings = [f for f in findings if f.category == "suspicious_pattern"]
     exfiltration_findings = [f for f in findings if f.category == "exfiltration"]
+    namespace_warnings = [f for f in findings if f.category == "namespace_warning"]
     all_iocs = hash_ioc_findings + script_ioc_findings + workflow_ioc_findings
 
     print(f"\n{Emojis.get(Emojis.SEARCH)} FINDINGS")
@@ -1244,6 +1358,9 @@ def print_structured_report(
             has_high_severity = any(f.severity in ("high", "critical") for f in exfiltration_findings)
             exfil_color = Colors.RED if has_high_severity else Colors.YELLOW
             print(Colors.colorize(exfil_line, exfil_color))
+        if namespace_warnings:
+            namespace_line = f"      • Namespace Warnings: {len(namespace_warnings)}"
+            print(Colors.colorize(namespace_line, Colors.YELLOW))
 
     # Section 4: Detailed Findings
     if findings:
@@ -1346,6 +1463,26 @@ def print_structured_report(
                 indicator_type = Colors.colorize(finding.package, severity_color)
                 print(f"   🚨 {indicator_type} ({finding.severity})")
                 print(f"      File: {finding.version}")
+                print(f"      Location: {source}")
+                print(f"      Evidence: {finding.evidence}")
+
+        if namespace_warnings:
+            has_other_findings = (
+                dependency_findings or hash_ioc_findings or script_ioc_findings
+                or workflow_ioc_findings or pattern_findings or exfiltration_findings
+            )
+            if has_other_findings:
+                print()
+            print(Colors.colorize("   Namespace Warnings:", Colors.YELLOW + Colors.BOLD))
+            for finding in namespace_warnings:
+                source = finding.source
+                if root:
+                    try:
+                        source = str(Path(source).resolve().relative_to(root))
+                    except Exception:  # noqa: BLE001 - best effort formatting
+                        source = finding.source
+                package_name = Colors.colorize(finding.package, Colors.YELLOW)
+                print(f"   ⚠️  {package_name} ({finding.version})")
                 print(f"      Location: {source}")
                 print(f"      Evidence: {finding.evidence}")
 
@@ -1458,12 +1595,27 @@ def print_compact_report(findings: List[Finding], root: Optional[Path]) -> None:
             indicator = Colors.colorize(finding.package, Colors.RED if finding.severity in ("high", "critical") else Colors.YELLOW)
             LOGGER.warning("🚨 %s [%s] (%s) -> %s", indicator, finding.severity, source, finding.evidence)
 
+    namespace_warnings = [f for f in findings if f.category == "namespace_warning"]
+    if namespace_warnings:
+        header = Colors.colorize("⚠️  Detected namespace warnings:", Colors.YELLOW + Colors.BOLD)
+        LOGGER.warning(header)
+        for finding in namespace_warnings:
+            source = finding.source
+            if root:
+                try:
+                    source = str(Path(source).resolve().relative_to(root))
+                except Exception:  # noqa: BLE001 - best effort formatting
+                    source = finding.source
+            package_name = Colors.colorize(finding.package, Colors.YELLOW)
+            LOGGER.warning("⚠️  %s (%s) [%s] -> %s", package_name, finding.version, source, finding.evidence)
+
     risk_emoji = determine_risk_level(findings)
     summary_parts = [
         f"Dependencies: {len(dependency_findings)}",
         f"IOCs: {len(all_iocs)}",
         f"Patterns: {len(pattern_findings)}",
         f"Exfiltration: {len(exfiltration_findings)}",
+        f"Namespaces: {len(namespace_warnings)}",
     ]
     total_msg = Colors.colorize(
         f"{risk_emoji} Total findings: {len(findings)} ({', '.join(summary_parts)})",
@@ -1532,6 +1684,18 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         action="store_false",
         dest="detect_iocs",
         help="Disable script and workflow IOC detection.",
+    )
+    parser.add_argument(
+        "--warn-namespaces",
+        action="store_true",
+        default=True,
+        help="Warn when dependencies use compromised maintainer namespaces (default: enabled).",
+    )
+    parser.add_argument(
+        "--no-warn-namespaces",
+        action="store_false",
+        dest="warn_namespaces",
+        help="Disable namespace compromise warnings.",
     )
     parser.add_argument(
         "--detect-patterns",
@@ -1653,6 +1817,7 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
             pattern_min_severity=args.pattern_severity,
             detect_exfiltration=args.detect_exfiltration,
             exfiltration_allowlist=exfiltration_allowlist,
+            warn_namespaces=args.warn_namespaces,
         )
         all_findings.extend(findings)
         overall_stats.merge(stats)

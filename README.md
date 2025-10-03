@@ -78,6 +78,7 @@ Useful modifiers (see [docs/USAGE.md](docs/USAGE.md) for more examples):
 - `--skip-cache` – skip cached npm tarballs (cache inspection runs by default; override the location with `--npm-cache-dir`)
 - `--no-hash-iocs` – disable hash-based IOC detection (enabled by default)
 - `--no-detect-iocs` – disable script and workflow IOC detection (enabled by default)
+- `--no-warn-namespaces` – disable warnings for compromised namespace scopes (enabled by default)
 - `--detect-patterns` – enable suspicious code pattern detection (disabled by default)
 - `--detect-exfiltration` – enable data exfiltration pattern detection (disabled by default)
 - `--exfiltration-allowlist domains` – comma-separated list of domains to exclude from exfiltration checks

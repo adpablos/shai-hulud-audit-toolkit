@@ -70,6 +70,14 @@ Script and workflow IOC detection runs by default, identifying:
 
 Use this flag to disable these detections if they cause false positives in your environment.
 
+### Disable namespace warnings
+```bash
+shai-hulud-audit --no-warn-namespaces
+```
+Namespace compromise warnings run by default, alerting when dependencies use scoped packages from compromised maintainer namespaces. For example, if the advisory lists `@malicious-scope/bad-package`, the scanner will warn about ANY package from `@malicious-scope/*`, even if the specific package isn't compromised.
+
+This helps identify supply chain risk exposure when a maintainer account is hijacked. Use `--no-warn-namespaces` to disable these warnings if you have many false positives from legitimately-used namespaces.
+
 ### Disable color output
 ```bash
 shai-hulud-audit --no-color

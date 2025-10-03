@@ -677,3 +677,110 @@ def test_exfiltration_allowlist(tmp_path, capsys):
 
     # Should not detect ngrok since it's allowlisted
     assert len(exfil_findings) == 0
+
+
+def test_namespace_warnings(tmp_path, capsys):
+    """Test detection of packages from compromised namespaces."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+
+    # Create package.json with package from compromised namespace
+    (project_dir / "package.json").write_text(
+        json.dumps({
+            "name": "test-package",
+            "version": "1.0.0",
+            "dependencies": {
+                "@malicious-scope/some-package": "1.0.0"
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    advisory = tmp_path / "advisory.json"
+    # Advisory contains @malicious-scope/other-package, not some-package
+    advisory.write_text(
+        json.dumps({
+            "items": [
+                {"package": "@malicious-scope/other-package", "version": "1.0.0"}
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    log_dir = tmp_path / "logs"
+
+    exit_code = scan.run(
+        [
+            str(project_dir),
+            "--advisory-file",
+            str(advisory),
+            "--log-dir",
+            str(log_dir),
+            "--format",
+            "json",
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+
+    # Parse JSON output
+    findings = json.loads(captured.out)
+    namespace_findings = [f for f in findings if f.get("category") == "namespace_warning"]
+
+    # Should warn about @malicious-scope namespace
+    assert len(namespace_findings) == 1
+    assert namespace_findings[0]["package"] == "@malicious-scope/some-package"
+    assert "Namespace @malicious-scope is compromised" in namespace_findings[0]["evidence"]
+
+
+def test_no_namespace_warnings_flag(tmp_path, capsys):
+    """Test that --no-warn-namespaces suppresses warnings."""
+    project_dir = tmp_path / "project"
+    project_dir.mkdir()
+
+    # Create package.json with package from compromised namespace
+    (project_dir / "package.json").write_text(
+        json.dumps({
+            "name": "test-package",
+            "version": "1.0.0",
+            "dependencies": {
+                "@malicious-scope/some-package": "1.0.0"
+            }
+        }),
+        encoding="utf-8",
+    )
+
+    advisory = tmp_path / "advisory.json"
+    advisory.write_text(
+        json.dumps({
+            "items": [
+                {"package": "@malicious-scope/other-package", "version": "1.0.0"}
+            ]
+        }),
+        encoding="utf-8",
+    )
+
+    log_dir = tmp_path / "logs"
+
+    exit_code = scan.run(
+        [
+            str(project_dir),
+            "--advisory-file",
+            str(advisory),
+            "--log-dir",
+            str(log_dir),
+            "--format",
+            "json",
+            "--no-warn-namespaces",
+        ]
+    )
+
+    captured = capsys.readouterr()
+
+    # Parse JSON output
+    findings = json.loads(captured.out)
+    namespace_findings = [f for f in findings if f.get("category") == "namespace_warning"]
+
+    # Should not warn when flag is disabled
+    assert len(namespace_findings) == 0
