@@ -105,6 +105,11 @@ def parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Emit scan findings as JSON (stdout).",
     )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable colored output (also respects NO_COLOR environment variable).",
+    )
     return parser.parse_args(argv)
 
 
