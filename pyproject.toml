@@ -11,15 +11,50 @@ authors = [{name = "Shai-Hulud Audit Toolkit Contributors"}]
 license = {text = "MIT"}
 requires-python = ">=3.10"
 dependencies = []
-keywords = ["security", "npm", "supply-chain", "audit"]
+keywords = [
+    "security",
+    "npm",
+    "supply-chain",
+    "audit",
+    "shai-hulud",
+    "vulnerability-scanner",
+    "cybersecurity",
+    "supply-chain-security",
+    "dependency-scanning",
+    "malware-detection",
+    "ioc-detection",
+    "pnpm",
+    "yarn",
+    "node-security",
+    "package-security",
+]
 classifiers = [
-    "Programming Language :: Python :: 3",
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: System Administrators",
+    "Intended Audience :: Information Technology",
+    "Topic :: Security",
+    "Topic :: Software Development :: Quality Assurance",
+    "Topic :: System :: Monitoring",
     "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
     "Operating System :: OS Independent",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "Operating System :: Microsoft :: Windows",
+    "Environment :: Console",
+    "Natural Language :: English",
 ]
 
 [project.urls]
-Homepage = "https://github.com/example/shai-hulud-audit-toolkit"
+Homepage = "https://github.com/adpablos/shai-hulud-audit-toolkit"
+Repository = "https://github.com/adpablos/shai-hulud-audit-toolkit"
+"Bug Tracker" = "https://github.com/adpablos/shai-hulud-audit-toolkit/issues"
+Documentation = "https://github.com/adpablos/shai-hulud-audit-toolkit/blob/main/docs/USAGE.md"
+Changelog = "https://github.com/adpablos/shai-hulud-audit-toolkit/blob/main/CHANGELOG.md"
 
 [project.scripts]
 shai-hulud-audit = "scripts.audit:run"
