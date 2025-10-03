@@ -28,6 +28,42 @@ ENV_ADVISORY_PATH = "SHAI_HULUD_ADVISORY"
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ADVISORY_FILE = PROJECT_ROOT / "data" / "compromised_packages_snapshot.json"
 
+
+class Colors:
+    """ANSI color codes for terminal output."""
+
+    RED = "\033[31m"
+    YELLOW = "\033[33m"
+    GREEN = "\033[32m"
+    BLUE = "\033[34m"
+    BOLD = "\033[1m"
+    RESET = "\033[0m"
+
+    _enabled = True
+
+    @classmethod
+    def disable(cls) -> None:
+        """Disable all color output."""
+        cls._enabled = False
+
+    @classmethod
+    def colorize(cls, text: str, color: str) -> str:
+        """Apply color to text if colors are enabled."""
+        if not cls._enabled:
+            return text
+        return f"{color}{text}{cls.RESET}"
+
+    @classmethod
+    def supports_color(cls) -> bool:
+        """Check if the terminal supports color output."""
+        # Respect NO_COLOR environment variable (https://no-color.org/)
+        if os.environ.get("NO_COLOR"):
+            return False
+        # Check if output is a TTY
+        if not hasattr(sys.stdout, "isatty") or not sys.stdout.isatty():
+            return False
+        return True
+
 COMPROMISED_PACKAGES: Dict[str, Set[str]] = {}
 SUPPRESSED_WARNING_SUBSTRINGS = (
     "resolve/test/resolver/malformed_package_json/package.json",
@@ -77,7 +113,28 @@ class ScanStats:
         return ", ".join(parts)
 
 
-def setup_logging(log_dir: Path, level: str) -> Path:
+class ColoredFormatter(logging.Formatter):
+    """Logging formatter with ANSI color support."""
+
+    LEVEL_COLORS = {
+        logging.DEBUG: Colors.BLUE,
+        logging.INFO: Colors.GREEN,
+        logging.WARNING: Colors.YELLOW,
+        logging.ERROR: Colors.RED,
+        logging.CRITICAL: Colors.RED + Colors.BOLD,
+    }
+
+    def format(self, record: logging.LogRecord) -> str:
+        levelname = record.levelname
+        if Colors._enabled:
+            color = self.LEVEL_COLORS.get(record.levelno, "")
+            record.levelname = Colors.colorize(levelname, color)
+        result = super().format(record)
+        record.levelname = levelname
+        return result
+
+
+def setup_logging(log_dir: Path, level: str, use_color: bool = True) -> Path:
     """Initialise console and file logging for the current execution."""
     numeric_level = getattr(logging, level.upper(), logging.INFO)
     log_dir.mkdir(parents=True, exist_ok=True)
@@ -87,13 +144,19 @@ def setup_logging(log_dir: Path, level: str) -> Path:
     LOGGER.setLevel(numeric_level)
     LOGGER.propagate = False
 
+    # File handler without colors (for parsing)
     file_handler = logging.FileHandler(log_path, encoding="utf-8")
     file_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(message)s"))
     LOGGER.addHandler(file_handler)
 
+    # Console handler with optional color support
     console_handler = logging.StreamHandler()
     console_handler.setLevel(numeric_level)
-    console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
+    if use_color and Colors.supports_color():
+        console_handler.setFormatter(ColoredFormatter("%(levelname)s: %(message)s"))
+    else:
+        Colors.disable()
+        console_handler.setFormatter(logging.Formatter("%(levelname)s: %(message)s"))
     LOGGER.addHandler(console_handler)
 
     return log_path
@@ -724,7 +787,8 @@ def summarize(findings: List[Finding], root: Optional[Path]) -> None:
     ioc_findings = [f for f in findings if f.category == "ioc"]
 
     if dependency_findings:
-        LOGGER.warning("Detected compromised dependencies:")
+        header = Colors.colorize("Detected compromised dependencies:", Colors.RED + Colors.BOLD)
+        LOGGER.warning(header)
         for finding in dependency_findings:
             source = finding.source
             if root:
@@ -732,10 +796,12 @@ def summarize(findings: List[Finding], root: Optional[Path]) -> None:
                     source = str(Path(source).resolve().relative_to(root))
                 except Exception:  # noqa: BLE001 - best effort formatting
                     source = finding.source
-            LOGGER.warning("- %s@%s (%s) -> %s", finding.package, finding.version, source, finding.evidence)
+            pkg_version = Colors.colorize(f"{finding.package}@{finding.version}", Colors.YELLOW)
+            LOGGER.warning("- %s (%s) -> %s", pkg_version, source, finding.evidence)
 
     if ioc_findings:
-        LOGGER.warning("Detected IOC hash matches (known malicious files):")
+        header = Colors.colorize("Detected IOC hash matches (known malicious files):", Colors.RED + Colors.BOLD)
+        LOGGER.warning(header)
         for finding in ioc_findings:
             source = finding.source
             if root:
@@ -743,10 +809,14 @@ def summarize(findings: List[Finding], root: Optional[Path]) -> None:
                     source = str(Path(source).resolve().relative_to(root))
                 except Exception:  # noqa: BLE001 - best effort formatting
                     source = finding.source
-            LOGGER.warning("- %s (%s) -> %s", finding.version, source, finding.evidence)
+            filename = Colors.colorize(finding.version, Colors.YELLOW)
+            LOGGER.warning("- %s (%s) -> %s", filename, source, finding.evidence)
 
-    LOGGER.warning("Total findings: %s (Dependencies: %s, IOCs: %s)",
-                   len(findings), len(dependency_findings), len(ioc_findings))
+    total_msg = Colors.colorize(
+        f"Total findings: {len(findings)} (Dependencies: {len(dependency_findings)}, IOCs: {len(ioc_findings)})",
+        Colors.RED + Colors.BOLD
+    )
+    LOGGER.warning(total_msg)
 
 
 def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -804,6 +874,11 @@ def parse_args(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
         choices=["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"],
         help="Console/log verbosity (default: INFO).",
     )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="Disable color output in terminal (also respects NO_COLOR environment variable).",
+    )
     return parser.parse_args(argv)
 
 
@@ -811,7 +886,8 @@ def run(argv: Optional[Sequence[str]] = None) -> int:
     args = parse_args(argv)
 
     log_dir = Path(args.log_dir).expanduser().resolve()
-    log_path = setup_logging(log_dir, args.log_level)
+    use_color = not args.no_color
+    log_path = setup_logging(log_dir, args.log_level, use_color=use_color)
     LOGGER.info("Detailed execution log: %s", log_path)
 
     advisory_path = resolve_advisory_path(args.advisory_file)

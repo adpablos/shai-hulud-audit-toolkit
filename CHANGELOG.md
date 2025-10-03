@@ -4,6 +4,8 @@
 
 - Enhance PyPI discoverability with expanded keywords, comprehensive classifiers,
   and complete project URLs in package metadata (#16)
+- Add ANSI color-coded terminal output with automatic TTY detection, `--no-color`
+  flag, and NO_COLOR environment variable support for improved readability (#10)
 
 ## v0.2.0 - 2025-10-03
 

@@ -333,3 +333,43 @@ def test_run_hash_iocs_disabled(tmp_path, capsys, monkeypatch):
     assert len(findings) == 0
     # With --json and no findings, it just shows successful completion
     assert "Scan completed successfully" in captured.err
+
+
+def test_no_color_flag(tmp_path, capsys):
+    """Test that --no-color flag works correctly."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+
+    _write_json(
+        workspace / "package.json",
+        {"name": "test-app", "dependencies": {"evil-pkg": "1.0.0"}}
+    )
+
+    advisory_path = tmp_path / "advisory.json"
+    _write_json(
+        advisory_path,
+        {"items": [{"package": "evil-pkg", "version": "1.0.0"}]}
+    )
+
+    log_dir = tmp_path / "logs"
+
+    # Run with --no-color flag
+    exit_code = scanner.run(
+        [
+            "--no-color",
+            "--advisory-file",
+            str(advisory_path),
+            "--log-dir",
+            str(log_dir),
+            "--skip-cache",
+            str(workspace),
+        ]
+    )
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+
+    # Verify no ANSI color codes in output
+    assert "\033[" not in captured.err
+    assert "Detected compromised dependencies" in captured.err
+    assert "evil-pkg@1.0.0" in captured.err
