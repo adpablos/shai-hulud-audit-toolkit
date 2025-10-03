@@ -60,6 +60,16 @@ files like `bundle.js`, `index.js`, and install scripts for known malicious
 Shai-Hulud payload SHA-256 hashes. Use this flag to disable hash checking if
 it causes performance issues or false positives.
 
+### Disable color output
+```bash
+shai-hulud-audit --no-color
+```
+Terminal output includes ANSI color codes by default for improved readability
+(error messages in red, warnings in yellow, etc.). Colors are automatically
+disabled when output is piped or redirected to a file. Use `--no-color` to
+explicitly disable colors, or set the `NO_COLOR` environment variable per
+https://no-color.org/.
+
 ## Configuration & Parser Hints
 
 Advisory sources are defined in `config/shai_hulud_sources.json`:
