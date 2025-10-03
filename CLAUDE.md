@@ -46,8 +46,8 @@ Co-Authored-By: Claude <noreply@anthropic.com>
 
 ### Phase 1: Quick Wins (Current)
 From `release/0.2.0`:
-- Issue #16: Repository metadata updates (30 min)
-- Issue #10: Color-coded terminal output (1-2 days)
+- ~~Issue #16: Repository metadata updates~~ ✅ Completed
+- Issue #10: Color-coded terminal output (1-2 days) ← **NEXT**
 - Issue #11: Emoji-based risk indicators (1 day)
 - Issue #12: Structured summary report (2-3 days)
 - Issue #15: Documentation enhancements (ongoing)
@@ -165,9 +165,9 @@ docs/
 ## Working with Issues
 
 ### Issue Labels from GitHub
-- **Priority 1** (Quick Wins): #10, #11, #12, #15, #16
+- **Priority 1** (Quick Wins): #10, #11, #12, #15
 - **Priority 2** (Features): #6, #7, #8, #13, #14
-- **Completed**: #9 (merged in v0.2.0)
+- **Completed**: #9 (npm cache), #16 (repository metadata)
 
 ### Issue Implementation Checklist
 - [ ] Create feature branch
@@ -177,6 +177,7 @@ docs/
 - [ ] Update docs/USAGE.md with examples
 - [ ] Run `ruff check .` and `pytest --cov`
 - [ ] Merge to release branch (if active) or create PR to main
+- [ ] Close GitHub issue with `gh issue close <number> --comment "<summary>"`
 
 ## References
 
