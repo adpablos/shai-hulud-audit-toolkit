@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "shai-hulud-audit-toolkit"
-version = "0.1.1"
+version = "0.2.0"
 description = "Fetch and scan for npm packages compromised in the Shai-Hulud attack."
 readme = "README.md"
 authors = [{name = "Shai-Hulud Audit Toolkit Contributors"}]

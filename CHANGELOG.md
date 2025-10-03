@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## v0.2.0 - 2025-10-03
+
 - Inspect cached npm tarballs by default and expose `--skip-cache` /
   `--npm-cache-dir` controls, surfacing compromised cache hits in JSON
   output and logs (#9)
