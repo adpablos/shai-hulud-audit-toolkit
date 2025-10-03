@@ -28,7 +28,7 @@ from scripts.scan_core.reporting.structured import print_structured_report
 from scripts.scan_core.scanner import collect_targets, gather_findings
 from scripts.scan_core.scanners.cache import parse_cache_entry, resolve_cache_index_dir, scan_npm_cache
 from scripts.scan_core.scanners.iocs import compute_file_hash, scan_file_for_iocs
-from scripts.scan_core.scanners.lockfiles import scan_yarn_lock
+from scripts.scan_core.scanners.lockfiles import scan_pnpm_lock, scan_yarn_lock
 from scripts.scan_core.scanners.node_modules import scan_global_npm
 from scripts.scan_core.utils import COMPROMISED_PACKAGES, resolve_advisory_path
 
